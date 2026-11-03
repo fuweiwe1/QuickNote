@@ -1,0 +1,50 @@
+name: Build Windows app
+on:
+  push:
+    branches: [main, work]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  storage-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Verify local persistence and recovery
+        run: dotnet run --project tests/QuickNote.Core.Tests -c Release
+  windows:
+    needs: storage-checks
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Check storage on Windows
+        run: dotnet run --project tests/QuickNote.Core.Tests -c Release
+      - name: Build native application
+        run: dotnet build src/QuickNote/QuickNote.csproj -c Release
+      - name: Check real WPF interactions and capture screenshots
+        shell: pwsh
+        run: |
+          $app = Start-Process src/QuickNote/bin/Release/net10.0-windows/QuickNote.exe -ArgumentList '--smoke-test artifacts/smoke' -PassThru
+          if (-not $app.WaitForExit(90000)) { $app.Kill(); throw 'Smoke check timed out' }
+          if ($app.ExitCode -ne 0) { Get-Content artifacts/smoke/failure.txt; throw 'Smoke check failed' }
+          Get-Content artifacts/smoke/passed.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Windows-UI-checks
+          path: artifacts/smoke/
+      - name: Publish portable builds
+        shell: pwsh
+        run: ./scripts/package.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QuickNote-Windows11-x64
+          path: artifacts/*.zip
+          retention-days: 30
