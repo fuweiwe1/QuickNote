@@ -6,12 +6,12 @@
 
 ## 下载和运行
 
-打开本仓库的 [Actions → Build Windows app](https://github.com/fuweiwe1/QuickNote/actions/workflows/build.yml)，选择最近一次成功的构建，在页面底部下载 **QuickNote-Windows11-x64**。解压后有两个压缩包：
+打开本仓库的 [Actions → Build Windows app](https://github.com/fuweiwe1/QuickNote/actions/workflows/build.yml)，选择最近一次成功的构建，在页面底部的 Artifacts 中选择一个版本下载。解压后双击 `QuickNote.exe`：
 
 | 版本 | 适用情况 |
 | --- | --- |
-| `QuickNote-win-x64-Portable.zip` | 推荐。自带运行环境，解压后双击 `QuickNote.exe` 即可，无需安装 .NET。 |
-| `QuickNote-win-x64-Small.zip` | 体积较小，需要预先安装 [.NET 10 Desktop Runtime（x64）](https://dotnet.microsoft.com/download/dotnet/10.0)。 |
+| `QuickNote-Windows11-x64-Portable` | 推荐。自带运行环境，无需安装 .NET。 |
+| `QuickNote-Windows11-x64-Small` | 体积较小，需要预先安装 [.NET 10 Desktop Runtime（x64）](https://dotnet.microsoft.com/download/dotnet/10.0)。 |
 
 支持 Windows 11 x64。首次便携版启动会在系统临时目录释放所需原生运行库。当前构建未进行商业代码签名；GitHub Actions 下载包默认保留 30 天，可以重新运行构建获取。
 
@@ -77,6 +77,6 @@ Linux 可运行存储检查，并通过 `EnableWindowsTargeting` 交叉编译 WP
 
 `tests/QuickNote.Core.Tests` 是不依赖第三方测试包的文件集成检查，覆盖中文和换行、重启恢复、顺序、图片独立副本、原子保存边界、数据损坏、版本兼容、大小限制及目录边界。失败即返回非零退出码。
 
-Windows 构建还会运行 `QuickNote.exe --smoke-test artifacts/smoke`，在临时数据目录中检查真实 WPF 资源、文字和图片剪贴板收录与复制、搜索、排序、删除撤销、收起呼出，并输出界面截图。**此开发模式会使用当前 Windows 会话的剪贴板**，不读写正常便签目录。截图和结果位于 Actions 的 `Windows-UI-checks` 下载包。
+Windows 构建还会运行 `QuickNote.exe --smoke-test artifacts/smoke`，在临时数据目录中检查真实 WPF 资源、文字和图片剪贴板收录与复制、搜索、排序、删除撤销、收起呼出，并输出界面截图。打包后的自带运行环境版本也会再次执行相同检查。**此开发模式会使用当前 Windows 会话的剪贴板**，不读写正常便签目录。截图和结果位于 Actions 的 `Windows-UI-checks` 和 `Windows-Portable-checks` 下载包。
 
 详见 [Windows 真机验收清单](docs/windows-checklist.md)。

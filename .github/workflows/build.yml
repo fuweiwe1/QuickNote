@@ -6,6 +6,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   storage-checks:
     runs-on: ubuntu-latest
@@ -43,8 +46,25 @@ jobs:
       - name: Publish portable builds
         shell: pwsh
         run: ./scripts/package.ps1
+      - name: Verify bundled executable
+        shell: pwsh
+        run: |
+          $app = Start-Process artifacts/Portable/QuickNote.exe -ArgumentList '--smoke-test artifacts/portable-smoke' -PassThru
+          if (-not $app.WaitForExit(90000)) { $app.Kill(); throw 'Portable smoke check timed out' }
+          if ($app.ExitCode -ne 0) { Get-Content artifacts/portable-smoke/failure.txt; throw 'Portable smoke check failed' }
+          Get-Content artifacts/portable-smoke/passed.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Windows-Portable-checks
+          path: artifacts/portable-smoke/
       - uses: actions/upload-artifact@v4
         with:
-          name: QuickNote-Windows11-x64
-          path: artifacts/*.zip
+          name: QuickNote-Windows11-x64-Portable
+          path: artifacts/Portable/
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QuickNote-Windows11-x64-Small
+          path: artifacts/Small/
           retention-days: 30
