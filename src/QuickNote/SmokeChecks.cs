@@ -26,7 +26,7 @@ internal static class SmokeChecks
             await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
             await window.CheckInteractions(output);
             File.WriteAllText(Path.Combine(output, "passed.txt"),
-                "PASS native WPF startup and resources\nPASS real clipboard text and bitmap capture\nPASS persisted image\nPASS text and image copy\nPASS search\nPASS reorder\nPASS delete and undo\nPASS fold and reveal\nPASS populated and detail screenshots\n");
+                "PASS native WPF startup and resources\nPASS real clipboard text and bitmap capture\nPASS oversized text and corrupt image handling\nPASS persisted image\nPASS text and image copy\nPASS search\nPASS reorder\nPASS delete and undo\nPASS fold and reveal\nPASS populated and detail screenshots\n");
             window.CloseForSmoke();
         }
         finally { if (Directory.Exists(temporary)) Directory.Delete(temporary, recursive: true); }
@@ -78,6 +78,14 @@ public partial class MainWindow
         await Capture();
         SmokeChecks.Assert(notebook.Notes.Count == 3 && notebook.Notes[0].Kind == NoteKind.Image, "Image capture failed");
         SmokeChecks.Assert(File.Exists(store.ImagePath(notebook.Notes[0].ImageFile!)), "Image not saved");
+        Clipboard.SetText(new string('x', NotebookStore.MaxTextLength + 1));
+        await Capture();
+        SmokeChecks.Assert(notebook.Notes.Count == 3, "Oversized text changed the notebook");
+        var corruptImage = Path.Combine(Path.GetDirectoryName(store.ImageDirectory)!, "corrupt.png");
+        File.WriteAllText(corruptImage, "This is not an image");
+        Clipboard.SetFileDropList(new System.Collections.Specialized.StringCollection { corruptImage });
+        await Capture();
+        SmokeChecks.Assert(notebook.Notes.Count == 3, "Corrupt image changed the notebook");
         await Copy(notebook.Notes[2]);
         SmokeChecks.Assert(Clipboard.GetText().StartsWith("你好"), "Text copy failed");
         await Copy(notebook.Notes[0]);

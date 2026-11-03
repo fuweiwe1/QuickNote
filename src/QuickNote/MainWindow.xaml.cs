@@ -165,7 +165,7 @@ public partial class MainWindow : Window
             if (note is null) { ShowToast("剪贴板里还没有文字或图片，先复制一下吧"); return; }
             if (AddNote(note)) ShowToast("夹好了，下次用时直接复制");
         }
-        catch (Exception ex) when (ex is COMException or IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
+        catch (Exception ex) when (IsContentError(ex))
         {
             Reveal();
             ShowToast("没能收录：" + FriendlyError(ex));
@@ -190,7 +190,7 @@ public partial class MainWindow : Window
             await ClipboardService.WithRetry(() => { ClipboardService.Copy(note, store); return true; });
             ShowToast(note.Kind == NoteKind.Image ? "图片已复制，去粘贴吧" : "文字已复制，去粘贴吧");
         }
-        catch (Exception ex) when (ex is COMException or IOException or NotSupportedException or ArgumentException)
+        catch (Exception ex) when (IsContentError(ex))
         { ShowToast("复制失败：" + FriendlyError(ex)); }
     }
 
@@ -280,7 +280,7 @@ public partial class MainWindow : Window
             var notes = notebook.Notes.Select(n => n.Id == result.Id ? result : n).ToList();
             if (Commit(notebook with { Notes = notes })) { RenderNotes(); ShowToast("修改已保存"); }
         }
-        catch (Exception ex) when (ex is IOException or NotSupportedException or ArgumentException)
+        catch (Exception ex) when (IsContentError(ex))
         { ShowToast("暂时无法打开：" + FriendlyError(ex)); }
     }
 
@@ -360,7 +360,7 @@ public partial class MainWindow : Window
                 if (AddNote(ClipboardService.FromFile(path, store, notebook.Notes.Count % 5))) added++;
                 else break;
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
+            catch (Exception ex) when (IsContentError(ex))
             { ShowToast("图片未收录：" + FriendlyError(ex)); return; }
         }
         if (folded) SetFolded(false);
@@ -387,6 +387,8 @@ public partial class MainWindow : Window
         catch (Win32Exception ex) { ShowToast("无法打开目录：" + ex.Message); }
     }
     private static string FriendlyError(Exception ex) => ex is COMException ? "剪贴板正忙，请稍后重试" : ex.Message;
+    private static bool IsContentError(Exception ex) => ex is COMException or IOException or
+        UnauthorizedAccessException or InvalidDataException or NotSupportedException or ArgumentException or FileFormatException;
     private void OnClosing(object? sender, CancelEventArgs e)
     {
         if (!exiting) { e.Cancel = true; Hide(); }

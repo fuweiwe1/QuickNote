@@ -48,7 +48,7 @@ public partial class NoteWindow : Window
             await ClipboardService.WithRetry(() => { ClipboardService.Copy(current, store); return true; });
             Status.Text = "已复制，可以去粘贴了";
         }
-        catch (Exception ex) when (ex is COMException or IOException or NotSupportedException or ArgumentException)
+        catch (Exception ex) when (ex is COMException or IOException or UnauthorizedAccessException or InvalidDataException or NotSupportedException or ArgumentException or FileFormatException)
         { Status.Text = "复制失败，请稍后重试"; }
     }
     private void OnKeyDown(object sender, KeyEventArgs e)
