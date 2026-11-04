@@ -143,12 +143,14 @@ public partial class MainWindow
         SmokeChecks.Assert(notebook.Notes.Count == 2 && store.Load().Notebook.Notes.All(n => n.Id != removed), "Delete did not persist");
         for (var i = 0; i < 16; i++)
             AddNote(new Note { Text = $"灵感 {i + 1}\n\n把一闪而过的想法，\n先轻轻夹在这里。", Color = i % 5 });
-        var monitorWidth = Width;
         foreach (var width in new[] { 800.0, 1280, 1920, 2560 })
         {
-            Width = width;
+            // A native window is capped by the runner's physical monitor. Test the actual
+            // canvas at each requested size rather than relying on an oversized HWND.
+            Root.Width = width;
+            LineArea.Width = width;
             UpdateLayout();
-            ArrangeCards();
+            ArrangeCardsAtWidth(width);
             foreach (NoteCard card in NotesPanel.Children)
             {
                 var x = Canvas.GetLeft(card);
@@ -156,9 +158,12 @@ public partial class MainWindow
                 if (card.Note.RopePosition is double anchor)
                     SmokeChecks.Assert(Math.Abs(x - ClotheslineLayout.LeftForPosition(width, anchor)) < 0.1, "Manual anchor did not adapt to monitor width");
             }
-            SmokeChecks.Snapshot(this, Path.Combine(output, $"02-overlap-{width}.png"));
+            SmokeChecks.Snapshot(Root, Path.Combine(output, $"02-overlap-{width}.png"));
         }
-        Width = monitorWidth;
+        Root.ClearValue(WidthProperty);
+        LineArea.ClearValue(WidthProperty);
+        arrangedWidth = -1;
+        UpdateLayout();
         ApplyScreen();
         await Task.Delay(650);
         SmokeChecks.Snapshot(this, Path.Combine(output, "03-edge-clothesline.png"));

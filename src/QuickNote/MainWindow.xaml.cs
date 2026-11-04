@@ -181,6 +181,11 @@ public partial class MainWindow : Window
     {
         if (!ready || Rope is null) return;
         var width = Math.Max(1, ActualWidth > 0 ? ActualWidth : Width);
+        ArrangeCardsAtWidth(width);
+    }
+
+    private void ArrangeCardsAtWidth(double width)
+    {
         if (Math.Abs(arrangedWidth - width) < 0.1) return;
         arrangedWidth = width;
         Rope.Data = new PathGeometry(new[] { new PathFigure(new Point(0, 12),
