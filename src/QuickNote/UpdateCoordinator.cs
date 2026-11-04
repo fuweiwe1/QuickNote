@@ -12,7 +12,7 @@ using QuickNote.Core;
 
 namespace QuickNote;
 
-internal sealed record UpdatePlan(int ParentId, long ParentStarted, string Target, string Sha256, long Size, string Version, bool SmokeMode);
+internal sealed record UpdatePlan(int ParentId, long ParentStarted, string Target, string Sha256, long Size, string Version, bool SmokeMode, bool FailStartup = false);
 
 internal static class UpdateCoordinator
 {
@@ -48,7 +48,7 @@ internal static class UpdateCoordinator
             string.Equals(Path.GetDirectoryName(directory), Path.GetFullPath(Root), StringComparison.OrdinalIgnoreCase);
     }
 
-    internal static async Task StartHelper(string workspace, UpdatePackage package, bool smokeMode = false)
+    internal static async Task StartHelper(string workspace, UpdatePackage package, bool smokeMode = false, bool failStartup = false)
     {
         var executable = Environment.ProcessPath ?? throw new InvalidOperationException("无法确定当前程序路径。");
         if (!executable.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) || (!smokeMode && Flavor is null))
@@ -57,7 +57,7 @@ internal static class UpdateCoordinator
         ExecutableUpdate.Verify(staged, package.Size, package.Sha256);
         using var current = Process.GetCurrentProcess();
         var plan = new UpdatePlan(current.Id, current.StartTime.ToUniversalTime().Ticks, executable,
-            package.Sha256, package.Size, package.Version.ToString(), smokeMode);
+            package.Sha256, package.Size, package.Version.ToString(), smokeMode, failStartup);
         var planFile = Path.Combine(workspace, "plan.json");
         File.WriteAllText(planFile, JsonSerializer.Serialize(plan));
         var helperFile = Path.Combine(workspace, "helper.exe");

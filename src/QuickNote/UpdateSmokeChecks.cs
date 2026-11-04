@@ -20,7 +20,8 @@ internal static class UpdateSmokeChecks
         var package = new UpdatePackage(UpdateCoordinator.CurrentVersion, UpdateCoordinator.Flavor ?? PackageFlavor.Small, "",
             new Uri("https://github.com/fuweiwe1/QuickNote/releases/download/v0.3.0/unused.exe"), input.Length,
             Convert.ToHexString(SHA256.HashData(input)));
-        await UpdateCoordinator.StartHelper(workspace, package, smokeMode: true);
+        await UpdateCoordinator.StartHelper(workspace, package, smokeMode: true,
+            failStartup: File.Exists(Path.Combine(workspace, "simulate-start-failure")));
     }
 
     internal static async Task Run(string output)
@@ -37,8 +38,8 @@ internal static class UpdateSmokeChecks
                 var target = Path.Combine(program, "QuickNote.exe");
                 File.Copy(Environment.ProcessPath!, target);
                 var staged = Path.Combine(workspace, "package.exe");
-                if (broken) File.WriteAllBytes(staged, new byte[] { 77, 90, 0, 0, 0, 0, 0, 0 });
-                else File.Copy(Environment.ProcessPath!, staged);
+                File.Copy(Environment.ProcessPath!, staged);
+                if (broken) File.WriteAllText(Path.Combine(workspace, "simulate-start-failure"), "fail startup deliberately");
                 var notebook = Path.Combine(workspace, "notebook.json");
                 File.WriteAllText(notebook, "便签和图片不参与程序更新");
                 var start = new ProcessStartInfo(target) { UseShellExecute = false, WorkingDirectory = program,

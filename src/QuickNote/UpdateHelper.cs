@@ -34,6 +34,7 @@ internal static class UpdateHelper
             if (!Version.TryParse(plan.Version, out var version) || (!plan.SmokeMode && version <= UpdateCoordinator.CurrentVersion))
                 throw new InvalidDataException("更新版本无效。");
             ExecutableUpdate.Verify(staged, plan.Size, plan.Sha256);
+            ExecutableUpdate.VerifyWindowsImage(staged);
             var probe = Path.Combine(Path.GetDirectoryName(plan.Target)!, ".QuickNote-write-" + Guid.NewGuid().ToString("N"));
             using (File.Create(probe)) { }
             File.Delete(probe);
@@ -63,7 +64,7 @@ internal static class UpdateHelper
             applied = true;
             if (plan.SmokeMode) File.AppendAllText(Path.Combine(workspace, "trace.txt"), "starting replacement\n");
             var start = new ProcessStartInfo(plan.Target) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(plan.Target)! };
-            start.ArgumentList.Add(plan.SmokeMode ? "--update-smoke-startup" : "--update-health");
+            start.ArgumentList.Add(plan.SmokeMode ? (plan.FailStartup ? "--update-smoke-fail-startup" : "--update-smoke-startup") : "--update-health");
             start.ArgumentList.Add(health);
             restarted = Process.Start(start) ?? throw new IOException("新版启动失败。");
             if (plan.SmokeMode) File.AppendAllText(Path.Combine(workspace, "trace.txt"), "replacement launched: " + restarted.Id + "\n");
@@ -82,6 +83,7 @@ internal static class UpdateHelper
         catch (Exception ex)
         {
             if (restarted is { HasExited: false }) { restarted.Kill(); await restarted.WaitForExitAsync(); }
+            restarted?.Dispose(); restarted = null;
             var detail = ex.Message;
             if (released)
             {

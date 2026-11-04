@@ -115,4 +115,5 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$GITHUB_REF_NAME" artifacts/QuickNote-win-x64-Small.exe artifacts/QuickNote-win-x64-Portable.exe artifacts/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --verify-tag --title "晾一会 $GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md --latest
+          gh release create "$GITHUB_REF_NAME" artifacts/QuickNote-win-x64-Small.exe artifacts/QuickNote-win-x64-Portable.exe artifacts/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --verify-tag --title "晾一会 $GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md --draft
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest
