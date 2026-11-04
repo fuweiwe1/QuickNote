@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Security.Cryptography;
@@ -17,15 +19,86 @@ public sealed class UpdateClient
     public const string Repository = "fuweiwe1/QuickNote";
     public const long MaximumPackageSize = 256 * 1024 * 1024;
     private readonly HttpClient http;
-    public UpdateClient(HttpClient http) => this.http = http;
-
-    public async Task<UpdatePackage?> CheckAsync(Version current, PackageFlavor flavor, CancellationToken cancellation = default)
+    private readonly TimeSpan attemptTimeout;
+    public UpdateClient(HttpClient http, TimeSpan? attemptTimeout = null)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"https://api.github.com/repos/{Repository}/releases/latest");
+        this.http = http;
+        this.attemptTimeout = attemptTimeout ?? TimeSpan.FromSeconds(12);
+        if (this.attemptTimeout <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(attemptTimeout));
+    }
+
+    public async Task<UpdatePackage?> CheckAsync(Version current, PackageFlavor flavor, CancellationToken cancellation = default,
+        IProgress<string>? progress = null)
+    {
+        cancellation.ThrowIfCancellationRequested();
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        var pending = new List<Task<CheckResult>>
+        {
+            ProbeAsync(current, flavor, manifest: true, stop.Token, progress),
+            ProbeAsync(current, flavor, manifest: false, stop.Token, progress)
+        };
+        var failures = new List<CheckResult>();
+        try
+        {
+            while (pending.Count > 0)
+            {
+                var completed = await Task.WhenAny(pending).WaitAsync(cancellation);
+                pending.Remove(completed);
+                var result = await completed;
+                cancellation.ThrowIfCancellationRequested();
+                if (result.Success) return result.Package;
+                failures.Add(result);
+                progress?.Report("正在尝试另一条官方更新入口…");
+            }
+            throw new UpdateCheckException(failures.Select(failure => new UpdateCheckIssue(failure.Source, failure.Error!)).ToArray());
+        }
+        finally { stop.Cancel(); }
+    }
+
+    private sealed record CheckResult(string Source, bool Success, UpdatePackage? Package, Exception? Error);
+
+    private async Task<CheckResult> ProbeAsync(Version current, PackageFlavor flavor, bool manifest,
+        CancellationToken cancellation, IProgress<string>? progress)
+    {
+        var source = manifest ? "release-manifest" : "release-api";
+        for (var attempt = 0; ; attempt++)
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+            timeout.CancelAfter(attemptTimeout);
+            var token = timeout.Token;
+            try
+            {
+                // Proxy discovery can block synchronously on Windows. Bound the wait on a
+                // worker so it cannot freeze the UI or prevent the other source succeeding.
+                var package = await Task.Run(() => FetchAsync(current, flavor, manifest, token), token).WaitAsync(token);
+                return new(source, true, package, null);
+            }
+            catch (Exception ex)
+            {
+                if (!cancellation.IsCancellationRequested && attempt == 0 && IsTransient(ex))
+                {
+                    progress?.Report("连接较慢，正在重试…");
+                    continue;
+                }
+                return new(source, false, null, ex);
+            }
+        }
+    }
+
+    private static bool IsTransient(Exception error) => error is OperationCanceledException or IOException ||
+        error is HttpRequestException request && (request.StatusCode is null ||
+            request.StatusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests || (int)request.StatusCode >= 500);
+
+    private async Task<UpdatePackage?> FetchAsync(Version current, PackageFlavor flavor, bool manifest, CancellationToken cancellation)
+    {
+        var uri = manifest ? $"https://github.com/{Repository}/releases/latest/download/update.json"
+            : $"https://api.github.com/repos/{Repository}/releases/latest";
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
         request.Headers.UserAgent.ParseAdd("QuickNote/" + current);
-        request.Headers.Accept.ParseAdd("application/vnd.github+json");
+        request.Headers.Accept.ParseAdd(manifest ? "application/json" : "application/vnd.github+json");
+        request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellation);
-        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        if (!manifest && response.StatusCode == HttpStatusCode.NotFound) return null;
         response.EnsureSuccessStatusCode();
         using var data = new MemoryStream();
         await using var input = await response.Content.ReadAsStreamAsync(cancellation);
@@ -36,7 +109,29 @@ public sealed class UpdateClient
             if (data.Length + read > 1024 * 1024) throw new InvalidDataException("更新信息太大，请稍后再试。");
             data.Write(buffer, 0, read);
         }
-        return ParseRelease(data.ToArray(), current, flavor);
+        return manifest ? ParseManifest(data.ToArray(), current, flavor) : ParseRelease(data.ToArray(), current, flavor);
+    }
+
+    public static UpdatePackage? ParseManifest(byte[] json, Version current, PackageFlavor flavor)
+    {
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        var text = root.GetProperty("version").GetString() ?? "";
+        if (root.GetProperty("schema").GetInt32() != 1 || !Version.TryParse(text, out var parsed) || text != Normalize(parsed).ToString())
+            throw new InvalidDataException("更新清单版本无法识别。");
+        var version = Normalize(parsed);
+        if (version <= Normalize(current)) return null;
+        var notes = root.TryGetProperty("notes", out var value) ? value.GetString() ?? "" : "";
+        foreach (var entry in root.GetProperty("packages").EnumerateArray())
+        {
+            if (entry.GetProperty("flavor").GetString() != flavor.ToString()) continue;
+            var uri = new Uri($"https://github.com/{Repository}/releases/download/v{version}/QuickNote-win-x64-{flavor}.exe");
+            var package = new UpdatePackage(version, flavor, notes[..Math.Min(notes.Length, 16000)], uri,
+                entry.GetProperty("size").GetInt64(), entry.GetProperty("sha256").GetString() ?? "");
+            Validate(package);
+            return package;
+        }
+        throw new InvalidDataException("清单尚未包含当前版本类型的更新文件。");
     }
 
     public static Version Normalize(Version version) => new(version.Major, version.Minor, Math.Max(0, version.Build));

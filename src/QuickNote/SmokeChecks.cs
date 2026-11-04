@@ -178,6 +178,7 @@ public partial class MainWindow
         await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
         SmokeChecks.Snapshot(updater, Path.Combine(output, "05-updater.png"));
         updater.Close();
+        await CheckUpdateCancellation(output);
     }
 
     internal void CloseForSmoke() { exiting = true; Close(); }

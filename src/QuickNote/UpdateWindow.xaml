@@ -14,6 +14,8 @@
   </ScrollViewer>
   <ProgressBar x:Name="DownloadProgress" Grid.Row="2" Height="4" Minimum="0" Maximum="100" Visibility="Collapsed" Margin="0,0,0,18" />
   <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
+   <Button x:Name="NetworkButton" Content="网络设置" Click="OnNetworkSettings" Margin="0,0,8,0" Padding="12,9" />
+   <Button x:Name="BrowserButton" Content="浏览器下载" Click="OnBrowserDownload" Visibility="Collapsed" Margin="0,0,8,0" Padding="12,9" />
    <Button x:Name="CancelButton" Content="关闭" Click="OnCancel" Margin="0,0,8,0" Padding="16,9" />
    <Button x:Name="ActionButton" Content="检查更新" Click="OnAction" IsEnabled="False" Background="#DEE7D1" Padding="18,9" />
   </StackPanel>

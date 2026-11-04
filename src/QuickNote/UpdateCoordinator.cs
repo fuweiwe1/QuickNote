@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Net;
 using System.Reflection;
 using System.Text.Json;
 using System.Threading;
@@ -20,8 +21,58 @@ internal static class UpdateCoordinator
     internal static PackageFlavor? Flavor => Enum.TryParse<PackageFlavor>(typeof(App).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
         .FirstOrDefault(a => a.Key == "QuickNoteFlavor")?.Value, out var flavor) ? flavor : null;
     internal static string Root => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "QuickNote", "updates");
-    internal static readonly HttpClient Http = new() { Timeout = TimeSpan.FromMinutes(5) };
+    private static HttpClient? http;
+    internal static HttpClient Http => http ??= CreateHttp(ProxyAddress);
     internal static UpdateClient Client => new(Http);
+    internal static string BrowserDownload => $"https://github.com/{UpdateClient.Repository}/releases/latest/download/QuickNote-win-x64-{Flavor ?? PackageFlavor.Small}.exe";
+
+    internal static string? ProxyAddress
+    {
+        get
+        {
+            try
+            {
+                var file = Path.Combine(Root, "proxy.json");
+                return File.Exists(file) ? UpdateProxy.Normalize(JsonSerializer.Deserialize<string>(File.ReadAllText(file))) : null;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException) { return null; }
+        }
+    }
+
+    private static HttpClient CreateHttp(string? proxy)
+    {
+        var handler = new SocketsHttpHandler { ConnectTimeout = TimeSpan.FromSeconds(10),
+            PooledConnectionLifetime = TimeSpan.FromMinutes(2), UseProxy = true };
+        if (proxy is not null) handler.Proxy = new WebProxy(proxy);
+        return new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(5) };
+    }
+
+    internal static void SaveProxy(string? address)
+    {
+        var proxy = UpdateProxy.Normalize(address);
+        var replacement = CreateHttp(proxy);
+        try
+        {
+            Directory.CreateDirectory(Root);
+            var path = Path.Combine(Root, "proxy.json");
+            File.WriteAllText(path + ".tmp", JsonSerializer.Serialize(proxy));
+            File.Move(path + ".tmp", path, overwrite: true);
+        }
+        catch { replacement.Dispose(); throw; }
+        var previous = http;
+        http = replacement;
+        previous?.Dispose();
+    }
+
+    internal static void WriteCheckLog(string detail)
+    {
+        try
+        {
+            Directory.CreateDirectory(Root);
+            File.WriteAllText(Path.Combine(Root, "last-check.log"), DateTimeOffset.Now.ToString("O") + Environment.NewLine + detail);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+    }
 
     internal static string CreateWorkspace()
     {

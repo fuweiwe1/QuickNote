@@ -339,6 +339,81 @@ Check("Free card positions survive restart and resize without moving other cards
     Throws<InvalidDataException>(() => store.Save(new() { Notes = new() { a with { RopePosition = 1.1 } } }));
     Assert(store.Load().Notebook.Notes[0].RopePosition == 0.72);
 });
+byte[] ManifestJson(string hash) => JsonSerializer.SerializeToUtf8Bytes(new
+{
+    schema = 1, version = "0.4.0", notes = "更新说明",
+    packages = new[] { new { flavor = "Small", size = payload.Length, sha256 = hash },
+        new { flavor = "Portable", size = payload.Length, sha256 = hash } }
+});
+Check("Official release manifest preserves package flavor and validates the hash", _ =>
+{
+    foreach (var flavor in new[] { PackageFlavor.Small, PackageFlavor.Portable })
+    {
+        var update = UpdateClient.ParseManifest(ManifestJson(digest), new Version(0, 3, 2), flavor)!;
+        Assert(update.Flavor == flavor && update.DownloadUri == Package(flavor).DownloadUri);
+    }
+    Throws<InvalidDataException>(() => UpdateClient.ParseManifest(ManifestJson("bad"), new Version(0, 3, 2), PackageFlavor.Small));
+    Assert(UpdateClient.ParseManifest(ManifestJson(digest), new Version(0, 4, 0, 0), PackageFlavor.Small) is null);
+});
+Check("A blocked API cannot delay a successful manifest check", _ =>
+{
+    var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    using var http = new HttpClient(new AsyncFixtureHttp(async (request, token) =>
+    {
+        if (request.RequestUri!.Host == "api.github.com")
+        { started.TrySetResult(); await Task.Delay(Timeout.Infinite, token); throw new Exception("Unreachable"); }
+        await started.Task.WaitAsync(token);
+        return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(ManifestJson(digest)) };
+    }));
+    var update = new UpdateClient(http, TimeSpan.FromSeconds(2)).CheckAsync(new Version(0, 3, 2), PackageFlavor.Small).GetAwaiter().GetResult();
+    Assert(update is not null && update.Version == new Version(0, 4, 0));
+});
+Check("A failed manifest falls back to the API, and transient failures retry", _ =>
+{
+    var attempts = 0;
+    using var http = new HttpClient(new FixtureHttp(request =>
+    {
+        if (request.RequestUri!.Host == "api.github.com") return new HttpResponseMessage(HttpStatusCode.Forbidden);
+        return Interlocked.Increment(ref attempts) == 1 ? new HttpResponseMessage(HttpStatusCode.BadGateway)
+            : new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(ManifestJson(digest)) };
+    }));
+    Assert(new UpdateClient(http).CheckAsync(new Version(0, 3, 2), PackageFlavor.Small).GetAwaiter().GetResult() is not null);
+    Assert(attempts == 2);
+    using var api = new HttpClient(new FixtureHttp(request => request.RequestUri!.Host == "api.github.com"
+        ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(ReleaseJson()) }
+        : new HttpResponseMessage(HttpStatusCode.NotFound)));
+    Assert(new UpdateClient(api).CheckAsync(new Version(0, 3, 2), PackageFlavor.Small).GetAwaiter().GetResult() is not null);
+});
+Check("Both stalled sources return a bounded timeout with source diagnostics", _ =>
+{
+    using var http = new HttpClient(new AsyncFixtureHttp(async (_, token) =>
+    { await Task.Delay(Timeout.Infinite, token); throw new Exception("Unreachable"); }));
+    try { new UpdateClient(http, TimeSpan.FromMilliseconds(80)).CheckAsync(new Version(0, 3, 2), PackageFlavor.Small).GetAwaiter().GetResult(); }
+    catch (UpdateCheckException error) { Assert(error.TimedOut && error.Issues.Length == 2 && error.Diagnostics.Contains("release-api")); return; }
+    throw new Exception("Expected a diagnosed update timeout");
+});
+Check("Cancellation stays distinct from timeout and permits a fresh check", _ =>
+{
+    var stalled = true;
+    using var http = new HttpClient(new AsyncFixtureHttp(async (request, token) =>
+    {
+        if (stalled) await Task.Delay(Timeout.Infinite, token);
+        return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(request.RequestUri!.Host == "api.github.com" ? ReleaseJson() : ManifestJson(digest)) };
+    }));
+    var client = new UpdateClient(http);
+    using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(60));
+    Throws<OperationCanceledException>(() => client.CheckAsync(new Version(0, 3, 2), PackageFlavor.Small, cancel.Token).GetAwaiter().GetResult());
+    stalled = false;
+    Assert(client.CheckAsync(new Version(0, 3, 2), PackageFlavor.Small).GetAwaiter().GetResult() is not null);
+});
+Check("Update proxy configuration accepts supported addresses without storing credentials", _ =>
+{
+    Assert(UpdateProxy.Normalize(null) is null && UpdateProxy.Normalize(" ") is null);
+    Assert(UpdateProxy.Normalize(" http://127.0.0.1:7890 ") == "http://127.0.0.1:7890/");
+    Assert(UpdateProxy.Normalize("socks5://127.0.0.1:1080")!.StartsWith("socks5://127.0.0.1:1080"));
+    foreach (var address in new[] { "bad", "file:///tmp/proxy", "http://user:password@127.0.0.1:7890", "http://127.0.0.1:7890/path", "http://127.0.0.1:7890/?secret=yes" })
+        Throws<ArgumentException>(() => UpdateProxy.Normalize(address));
+});
 Console.WriteLine($"\n{passed} storage, layout, docking, dragging and update checks passed.");
 
 sealed class FixtureHttp : HttpMessageHandler
@@ -359,4 +434,11 @@ sealed class CancelAfterFirstRead : MemoryStream
         read = true;
         return base.ReadAsync(buffer[..1], cancellationToken);
     }
+}
+
+sealed class AsyncFixtureHttp : HttpMessageHandler
+{
+    private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> response;
+    public AsyncFixtureHttp(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> response) => this.response = response;
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token) => response(request, token);
 }
