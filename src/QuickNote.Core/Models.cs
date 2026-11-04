@@ -14,6 +14,8 @@ public sealed record Note
     public string Label { get; init; } = "";
     public int Color { get; init; }
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.Now;
+    public double? RopePosition { get; init; }
+    public DateTimeOffset? MovedAt { get; init; }
 }
 
 public sealed record Preferences

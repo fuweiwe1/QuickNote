@@ -6,11 +6,17 @@
     <UseWindowsForms>true</UseWindowsForms>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <AssemblyName>QuickNote</AssemblyName>
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
+    <QuickNoteFlavor Condition="'$(QuickNoteFlavor)' == ''">Development</QuickNoteFlavor>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets/app.ico</ApplicationIcon>
     <!-- WPF owns DPI awareness through the manifest; WinForms is used only for the tray. -->
     <NoWarn>$(NoWarn);WFO0003</NoWarn>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../QuickNote.Core/QuickNote.Core.csproj" /></ItemGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>QuickNoteFlavor</_Parameter1><_Parameter2>$(QuickNoteFlavor)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
 </Project>

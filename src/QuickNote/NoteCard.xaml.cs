@@ -19,10 +19,13 @@ public partial class NoteCard : UserControl
     private readonly double restingAngle;
     private Point dragStart;
     private bool dragArmed;
+    private bool dragging;
     public event Action<NoteCard>? CopyRequested;
     public event Action<NoteCard>? DeleteRequested;
     public event Action<NoteCard>? OpenRequested;
-    public event Action<Guid, Guid>? ReorderRequested;
+    public event Action<NoteCard, Point>? DragStarted;
+    public event Action<NoteCard>? DragMoved;
+    public event Action<NoteCard, bool>? DragFinished;
     public event Action<bool>? InteractionChanged;
 
     public NoteCard(Note note, NotebookStore store)
@@ -50,7 +53,7 @@ public partial class NoteCard : UserControl
             }
         }
         AutomationProperties.SetName(this, note.Kind == NoteKind.Text ? note.Text[..Math.Min(80, note.Text.Length)] : note.Label);
-        ToolTip = "双击查看 · 拖动调整位置";
+        ToolTip = "双击查看 · 按住拖动，松手夹在绳子上";
         Focusable = true;
     }
 
@@ -109,6 +112,7 @@ public partial class NoteCard : UserControl
         if (e.ClickCount == 2) { dragArmed = false; OpenRequested?.Invoke(this); e.Handled = true; return; }
         dragStart = e.GetPosition(this);
         dragArmed = true;
+        CaptureMouse();
     }
     private static bool FindButton(DependencyObject? source)
     {
@@ -121,24 +125,40 @@ public partial class NoteCard : UserControl
     }
     private void OnMouseMove(object sender, MouseEventArgs e)
     {
-        if (!dragArmed || e.LeftButton != MouseButtonState.Pressed) { dragArmed = false; return; }
+        if (!dragArmed) return;
+        if (e.LeftButton != MouseButtonState.Pressed) { FinishDrag(commit: dragging); return; }
         var point = e.GetPosition(this);
-        if (Math.Abs(point.X - dragStart.X) + Math.Abs(point.Y - dragStart.Y) < 10) return;
-        dragArmed = false;
-        InteractionChanged?.Invoke(true);
-        try { DragDrop.DoDragDrop(this, new DataObject("QuickNote/NoteId", Note.Id.ToString()), DragDropEffects.Move); }
+        if (!dragging)
+        {
+            if (Math.Abs(point.X - dragStart.X) + Math.Abs(point.Y - dragStart.Y) < 5) return;
+            dragging = true;
+            InteractionChanged?.Invoke(true);
+            DragStarted?.Invoke(this, dragStart);
+        }
+        DragMoved?.Invoke(this);
+    }
+    private void OnMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (dragging) e.Handled = true;
+        FinishDrag(commit: true);
+    }
+    private void OnLostCapture(object sender, MouseEventArgs e) => FinishDrag(commit: false);
+    private void FinishDrag(bool commit)
+    {
+        var wasDragging = dragging;
+        dragging = false; dragArmed = false;
+        if (IsMouseCaptured) ReleaseMouseCapture();
+        if (!wasDragging) return;
+        try { DragFinished?.Invoke(this, commit); }
         finally { InteractionChanged?.Invoke(false); }
     }
-    private void OnDragOver(object sender, DragEventArgs e)
+
+    internal void PrepareDrag()
     {
-        if (!e.Data.GetDataPresent("QuickNote/NoteId")) return;
-        e.Effects = DragDropEffects.Move;
-        e.Handled = true;
-    }
-    private void OnDrop(object sender, DragEventArgs e)
-    {
-        if (!e.Data.GetDataPresent("QuickNote/NoteId")) return;
-        if (Guid.TryParse(e.Data.GetData("QuickNote/NoteId") as string, out var id)) ReorderRequested?.Invoke(id, Note.Id);
-        e.Handled = true;
+        CardScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+        CardScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+        CardScale.ScaleX = CardScale.ScaleY = 1;
+        CardRotation.BeginAnimation(RotateTransform.AngleProperty, null);
+        CardRotation.Angle = 0;
     }
 }

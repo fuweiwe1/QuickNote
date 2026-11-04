@@ -2,6 +2,7 @@ name: Build Windows app
 on:
   push:
     branches: [main, work]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 permissions:
@@ -53,6 +54,21 @@ jobs:
           if (-not $app.WaitForExit(90000)) { $app.Kill(); throw 'Portable smoke check timed out' }
           if ($app.ExitCode -ne 0) { Get-Content artifacts/portable-smoke/failure.txt; throw 'Portable smoke check failed' }
           Get-Content artifacts/portable-smoke/passed.txt
+      - name: Check updater handoff and failed-start rollback in both editions
+        shell: pwsh
+        run: |
+          foreach ($kind in @('Small', 'Portable')) {
+            $output = "artifacts/$kind-update-checks"
+            $app = Start-Process "artifacts/$kind/QuickNote.exe" -ArgumentList "--updater-smoke $output" -PassThru
+            if (-not $app.WaitForExit(90000)) { $app.Kill(); throw 'Updater process check timed out' }
+            if ($app.ExitCode -ne 0) { Get-Content "$output/failure.txt"; throw 'Updater process check failed' }
+            Get-Content "$output/passed.txt"
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Windows-Updater-checks
+          path: artifacts/*-update-checks/
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -68,3 +84,35 @@ jobs:
           name: QuickNote-Windows11-x64-Small
           path: artifacts/Small/
           retention-days: 30
+      - uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          name: Release-files
+          path: |
+            artifacts/QuickNote-win-x64-*.exe
+            artifacts/SHA256SUMS.txt
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: Release-files
+          path: artifacts
+      - name: Verify tag matches application version
+        run: |
+          python - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+          version = ET.parse('src/QuickNote/QuickNote.csproj').find('.//Version').text
+          assert os.environ['GITHUB_REF_NAME'] == 'v' + version, 'Release tag must match the application version'
+          PY
+      - name: Publish application update feed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" artifacts/QuickNote-win-x64-Small.exe artifacts/QuickNote-win-x64-Portable.exe artifacts/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --verify-tag --title "晾一会 $GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md --latest

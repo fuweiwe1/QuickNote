@@ -1,6 +1,13 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using QuickNote.Core;
 
 // Dependency-free integration checks against real temporary files, on Linux and Windows.
@@ -187,12 +194,12 @@ Check("Mouse departure has a grace period, and return cancels hiding", _ =>
     var dock = new EdgeDockState();
     var bounds = new DockBounds(0, 0, 1920, 330);
     dock.Reveal(0);
-    Assert(dock.Update(600, 600, bounds, 3, 349));
-    Assert(dock.Update(600, 100, bounds, 3, 350));
-    Assert(dock.Update(600, 600, bounds, 3, 699));
-    Assert(!dock.Update(600, 600, bounds, 3, 700));
-    Assert(!dock.Update(600, 100, bounds, 3, 710));
-    Assert(dock.Update(600, 0, bounds, 3, 720));
+    Assert(dock.Update(600, 600, bounds, 3, 199));
+    Assert(dock.Update(600, 100, bounds, 3, 200));
+    Assert(dock.Update(600, 600, bounds, 3, 399));
+    Assert(!dock.Update(600, 600, bounds, 3, 400));
+    Assert(!dock.Update(600, 100, bounds, 3, 410));
+    Assert(dock.Update(600, 0, bounds, 3, 420));
 });
 Check("Menus, dragging and details hold the dock open until all interactions end", _ =>
 {
@@ -203,7 +210,146 @@ Check("Menus, dragging and details hold the dock open until all interactions end
     dock.Release(5000);
     Assert(dock.Update(600, 600, bounds, 3, 9000));
     dock.Release(9000);
-    Assert(dock.Update(600, 600, bounds, 3, 9349));
-    Assert(!dock.Update(600, 600, bounds, 3, 9350));
+    Assert(dock.Update(600, 600, bounds, 3, 9199));
+    Assert(!dock.Update(600, 600, bounds, 3, 9200));
 });
-Console.WriteLine($"\n{passed} storage, layout and edge docking checks passed.");
+
+var payload = Encoding.UTF8.GetBytes("MZ test update payload");
+var digest = Convert.ToHexString(SHA256.HashData(payload));
+UpdatePackage Package(PackageFlavor flavor = PackageFlavor.Small) => new(new Version(0, 4, 0), flavor, "新版说明",
+    new Uri($"https://github.com/fuweiwe1/QuickNote/releases/download/v0.4.0/QuickNote-win-x64-{flavor}.exe"), payload.Length, digest);
+byte[] ReleaseJson(bool prerelease = false, bool draft = false, string? hash = null, string? url = null) => JsonSerializer.SerializeToUtf8Bytes(new
+{
+    tag_name = "v0.4.0", prerelease, draft, body = "更新说明",
+    assets = new[] { new { name = "QuickNote-win-x64-Small.exe", size = payload.Length, digest = "sha256:" + (hash ?? digest),
+        browser_download_url = url ?? Package().DownloadUri.AbsoluteUri } }
+});
+Check("Stable release selection preserves flavor and normalizes assembly revisions", _ =>
+{
+    var package = UpdateClient.ParseRelease(ReleaseJson(), new Version(0, 3, 0, 0), PackageFlavor.Small)!;
+    Assert(package.Version == new Version(0, 4, 0) && package.Flavor == PackageFlavor.Small);
+    Assert(UpdateClient.ParseRelease(ReleaseJson(), new Version(0, 4, 0, 0), PackageFlavor.Small) is null);
+    Assert(UpdateClient.ParseRelease(ReleaseJson(), new Version(0, 5, 0), PackageFlavor.Small) is null);
+    Assert(UpdateClient.ParseRelease(ReleaseJson(prerelease: true), new Version(0, 3, 0), PackageFlavor.Small) is null);
+    Assert(UpdateClient.ParseRelease(ReleaseJson(draft: true), new Version(0, 3, 0), PackageFlavor.Small) is null);
+    Throws<InvalidDataException>(() => UpdateClient.ParseRelease(ReleaseJson(), new Version(0, 3, 0), PackageFlavor.Portable));
+});
+Check("Update metadata rejects unrelated hosts, missing hashes and oversized executables", _ =>
+{
+    Throws<InvalidDataException>(() => UpdateClient.ParseRelease(ReleaseJson(url: "https://example.com/fake.exe"), new Version(0, 3, 0), PackageFlavor.Small));
+    Throws<InvalidDataException>(() => UpdateClient.ParseRelease(ReleaseJson(hash: "bad"), new Version(0, 3, 0), PackageFlavor.Small));
+    Throws<InvalidDataException>(() => UpdateClient.Validate(Package() with { Size = UpdateClient.MaximumPackageSize + 1 }));
+    Throws<InvalidDataException>(() => UpdateClient.Validate(Package() with { DownloadUri = new Uri(Package().DownloadUri.AbsoluteUri.Replace("https:", "http:")) }));
+});
+Check("Release checks handle unavailable, current and newer releases without credentials", _ =>
+{
+    using var client = new HttpClient(new FixtureHttp(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(ReleaseJson()) }));
+    var update = new UpdateClient(client).CheckAsync(new Version(0, 3, 0), PackageFlavor.Small).GetAwaiter().GetResult();
+    Assert(update is not null);
+    using var empty = new HttpClient(new FixtureHttp(_ => new HttpResponseMessage(HttpStatusCode.NotFound)));
+    Assert(new UpdateClient(empty).CheckAsync(new Version(0, 3, 0), PackageFlavor.Small).GetAwaiter().GetResult() is null);
+});
+Check("Downloaded update is persisted only when size and hash match", path =>
+{
+    using var http = new HttpClient(new FixtureHttp(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(payload) }));
+    var client = new UpdateClient(http);
+    var file = Path.Combine(path, "package.exe");
+    client.DownloadAsync(Package(), file).GetAwaiter().GetResult();
+    Assert(File.ReadAllBytes(file).SequenceEqual(payload));
+    Throws<IOException>(() => client.DownloadAsync(Package(), file).GetAwaiter().GetResult());
+    Assert(File.ReadAllBytes(file).SequenceEqual(payload));
+});
+Check("Failed or canceled downloads never replace existing programs or leave partial files", path =>
+{
+    var target = Path.Combine(path, "QuickNote.exe");
+    File.WriteAllText(target, "old version");
+    using var http = new HttpClient(new FixtureHttp(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(payload) }));
+    var client = new UpdateClient(http);
+    var staged = Path.Combine(path, "partial.exe");
+    Throws<InvalidDataException>(() => client.DownloadAsync(Package() with { Sha256 = new string('0', 64) }, staged).GetAwaiter().GetResult());
+    Assert(!File.Exists(staged));
+    Throws<InvalidDataException>(() => client.DownloadAsync(Package() with { Size = payload.Length + 1 }, staged).GetAwaiter().GetResult());
+    Assert(!File.Exists(staged));
+    using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
+    Throws<OperationCanceledException>(() => client.DownloadAsync(Package(), staged, cancellation: cancellation.Token).GetAwaiter().GetResult());
+    Assert(File.ReadAllText(target) == "old version" && !File.Exists(staged));
+});
+Check("Executable replacement keeps the previous version and supports rollback", path =>
+{
+    var target = Path.Combine(path, "QuickNote.exe");
+    var staged = Path.Combine(path, "package.exe");
+    File.WriteAllText(target, "old version");
+    File.WriteAllBytes(staged, payload);
+    File.WriteAllText(Path.Combine(path, "notebook.json"), "笔记保留");
+    ExecutableUpdate.Apply(staged, target, payload.Length, digest);
+    Assert(File.ReadAllBytes(target).SequenceEqual(payload) && File.ReadAllText(target + ".previous") == "old version");
+    ExecutableUpdate.Rollback(target);
+    Assert(File.ReadAllText(target) == "old version" && File.ReadAllText(Path.Combine(path, "notebook.json")) == "笔记保留");
+    Assert(File.ReadAllBytes(target + ".failed").SequenceEqual(payload));
+    ExecutableUpdate.Apply(staged, target, payload.Length, digest);
+    ExecutableUpdate.Apply(staged, target, payload.Length, digest);
+    Assert(!Directory.EnumerateFiles(path, ".QuickNote-new-*").Any());
+});
+Check("Cancellation after partial download removes the incomplete executable", path =>
+{
+    using var http = new HttpClient(new FixtureHttp(_ =>
+    {
+        var content = new StreamContent(new CancelAfterFirstRead(payload));
+        content.Headers.ContentLength = payload.Length;
+        return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+    }));
+    var staged = Path.Combine(path, "package.exe");
+    Throws<OperationCanceledException>(() => new UpdateClient(http).DownloadAsync(Package(), staged).GetAwaiter().GetResult());
+    Assert(!File.Exists(staged));
+});
+Check("A corrupted staged executable leaves the installed version untouched", path =>
+{
+    var target = Path.Combine(path, "QuickNote.exe");
+    var staged = Path.Combine(path, "package.exe");
+    File.WriteAllText(target, "old version");
+    File.WriteAllText(staged, "corrupt update");
+    Throws<InvalidDataException>(() => ExecutableUpdate.Apply(staged, target, payload.Length, digest));
+    Assert(File.ReadAllText(target) == "old version" && !File.Exists(target + ".previous"));
+});
+Check("Free card positions survive restart and resize without moving other cards", path =>
+{
+    var store = new NotebookStore(path);
+    var a = new Note { Text = "自由定位", RopePosition = 0.72, MovedAt = DateTimeOffset.UtcNow };
+    var b = new Note { Text = "自动排布" };
+    store.Save(new() { Notes = new() { a, b } });
+    var notes = store.Load().Notebook.Notes;
+    Assert(notes[0].RopePosition == 0.72 && notes[0].MovedAt == a.MovedAt);
+    foreach (var width in new[] { 800.0, 1280, 1920, 2560 })
+    {
+        var positions = ClotheslineLayout.Positions(width, notes);
+        Assert(Math.Abs(ClotheslineLayout.PositionForLeft(width, positions[0]) - 0.72) < 0.00001);
+        Assert(positions[1] == ClotheslineLayout.Positions(width, 2)[1]);
+        Assert(positions.All(x => x >= ClotheslineLayout.FirstCardLeft && x + ClotheslineLayout.CardWidth <= width - ClotheslineLayout.RightInset + 0.00001));
+    }
+    Assert(ClotheslineLayout.PositionForLeft(1280, -500) == 0);
+    Assert(ClotheslineLayout.PositionForLeft(1280, 50000) == 1);
+    Throws<InvalidDataException>(() => store.Save(new() { Notes = new() { a with { RopePosition = double.NaN } } }));
+    Throws<InvalidDataException>(() => store.Save(new() { Notes = new() { a with { RopePosition = 1.1 } } }));
+    Assert(store.Load().Notebook.Notes[0].RopePosition == 0.72);
+});
+Console.WriteLine($"\n{passed} storage, layout, docking, dragging and update checks passed.");
+
+sealed class FixtureHttp : HttpMessageHandler
+{
+    private readonly Func<HttpRequestMessage, HttpResponseMessage> response;
+    public FixtureHttp(Func<HttpRequestMessage, HttpResponseMessage> response) => this.response = response;
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    { cancellationToken.ThrowIfCancellationRequested(); return Task.FromResult(response(request)); }
+}
+
+sealed class CancelAfterFirstRead : MemoryStream
+{
+    private bool read;
+    public CancelAfterFirstRead(byte[] bytes) : base(bytes) { }
+    public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        if (read) return ValueTask.FromCanceled<int>(new CancellationToken(canceled: true));
+        read = true;
+        return base.ReadAsync(buffer[..1], cancellationToken);
+    }
+}

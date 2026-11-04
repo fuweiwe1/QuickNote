@@ -3,7 +3,7 @@
  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
  Width="154" Height="216" RenderTransformOrigin="0.5,0.06"
  MouseEnter="OnHover" MouseLeave="OnLeave" MouseLeftButtonDown="OnMouseDown" MouseMove="OnMouseMove"
- AllowDrop="True" DragOver="OnDragOver" Drop="OnDrop">
+ MouseLeftButtonUp="OnMouseUp" LostMouseCapture="OnLostCapture">
  <UserControl.RenderTransform><TransformGroup><ScaleTransform x:Name="CardScale" /><RotateTransform x:Name="CardRotation" /><TranslateTransform x:Name="CardOffset" /></TransformGroup></UserControl.RenderTransform>
  <Grid>
   <Border x:Name="Paper" Margin="0,20,0,0" CornerRadius="2" BorderThickness="1" BorderBrush="#18000000">

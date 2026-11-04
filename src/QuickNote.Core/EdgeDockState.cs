@@ -8,7 +8,7 @@ public readonly record struct DockBounds(double Left, double Top, double Width, 
 /// <summary>Monotonic-time state machine shared by the real pointer loop and behavior checks.</summary>
 public sealed class EdgeDockState
 {
-    public const long LeaveDelayMilliseconds = 350;
+    public const long LeaveDelayMilliseconds = 200;
     public bool Expanded { get; private set; }
     private long lastInside;
     private int holds;

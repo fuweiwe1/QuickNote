@@ -86,6 +86,7 @@ public partial class MainWindow : Window
         }
         menu.Items.Add(monitors);
         menu.Items.Add(new Forms.ToolStripSeparator());
+        menu.Items.Add("检查更新…", null, (_, _) => OpenUpdater());
         menu.Items.Add("打开本地数据目录", null, (_, _) => OpenDataFolder());
         menu.Items.Add("退出", null, (_, _) => Exit());
         tray.ContextMenuStrip = menu;
@@ -186,14 +187,16 @@ public partial class MainWindow : Window
             new PathSegment[] { new QuadraticBezierSegment(new Point(width / 2, 42), new Point(width, 12), true) }, false) });
         Canvas.SetLeft(RightAnchor, width - 7);
         Canvas.SetTop(NotebookHost, ClotheslineLayout.RopeY(78, width) - 6);
-        var positions = ClotheslineLayout.Positions(width, NotesPanel.Children.Count);
+        var positions = ClotheslineLayout.Positions(width, notebook.Notes);
+        var layers = notebook.Notes.Select((note, index) => (note, index)).OrderBy(item => item.note.MovedAt ?? DateTimeOffset.MinValue)
+            .Select((item, rank) => (item.note.Id, rank)).ToDictionary(item => item.Id, item => item.rank);
         for (var i = 0; i < positions.Length; i++)
         {
             var card = (NoteCard)NotesPanel.Children[i];
             Canvas.SetLeft(card, positions[i]);
             Canvas.SetTop(card, ClotheslineLayout.RopeY(positions[i] + card.Width / 2, width) - 6);
-            card.RestingZIndex = i;
-            Panel.SetZIndex(card, card.IsMouseOver ? int.MaxValue : i);
+            card.RestingZIndex = layers[card.Note.Id];
+            Panel.SetZIndex(card, card.IsMouseOver ? int.MaxValue : card.RestingZIndex);
         }
     }
 
@@ -208,7 +211,9 @@ public partial class MainWindow : Window
             card.CopyRequested += async c => await Copy(c.Note, c);
             card.DeleteRequested += Delete;
             card.OpenRequested += c => OpenEditor(c.Note);
-            card.ReorderRequested += Reorder;
+            card.DragStarted += BeginCardDrag;
+            card.DragMoved += MoveCardDrag;
+            card.DragFinished += EndCardDrag;
             card.InteractionChanged += held => { if (held) dock.Hold(); else dock.Release(Environment.TickCount64); };
             NotesPanel.Children.Add(card);
             if (note.Id == animate) card.Loaded += (_, _) => card.AnimateIn();
@@ -311,18 +316,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private void Reorder(Guid from, Guid to)
-    {
-        if (from == to) return;
-        var notes = notebook.Notes.ToList();
-        var fromIndex = notes.FindIndex(n => n.Id == from);
-        var toIndex = notes.FindIndex(n => n.Id == to);
-        if (fromIndex < 0 || toIndex < 0) return;
-        var note = notes[fromIndex];
-        notes.RemoveAt(fromIndex); notes.Insert(toIndex, note);
-        if (Commit(notebook with { Notes = notes })) RenderNotes();
-    }
-
     private void OpenEditor(Note note)
     {
         dock.Hold();
@@ -383,6 +376,7 @@ public partial class MainWindow : Window
             monitors.Items.Add(item);
         }
         menu.Items.Add(monitors);
+        AddMenu(menu, "检查更新…", OpenUpdater);
         AddMenu(menu, "打开本地数据目录", OpenDataFolder);
         menu.Items.Add(new Separator());
         AddMenu(menu, "退出 QuickNote", Exit);
@@ -391,6 +385,15 @@ public partial class MainWindow : Window
     }
     private static void AddMenu(ContextMenu menu, string text, Action action)
     { var item = new MenuItem { Header = text }; item.Click += (_, _) => action(); menu.Items.Add(item); }
+    private void OpenUpdater()
+    {
+        Reveal();
+        dock.Hold();
+        var restart = false;
+        try { restart = new UpdateWindow { Owner = this }.ShowDialog() == true; }
+        finally { dock.Release(Environment.TickCount64); }
+        if (restart) Exit();
+    }
     private void OpenDataFolder()
     {
         try { Process.Start(new ProcessStartInfo(Path.GetDirectoryName(store.ImageDirectory)!) { UseShellExecute = true }); }
@@ -403,6 +406,7 @@ public partial class MainWindow : Window
     private void OnClosed(object? sender, EventArgs e)
     {
         edgeTimer.Stop();
+        floatingCard?.Close();
         NativeMethods.UnregisterHotKey(handle, 2);
         if (source is { IsDisposed: false }) source.RemoveHook(WindowMessage);
         tray?.Dispose();

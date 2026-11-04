@@ -28,7 +28,7 @@ internal static class SmokeChecks
             await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
             await window.CheckInteractions(output);
             File.WriteAllText(Path.Combine(output, "passed.txt"),
-                "PASS native WPF startup and minimal canvas\nPASS edge reveal, delayed hide and minimize recovery\nPASS non-activating reveal and native topmost ordering\nPASS real clipboard text and bitmap capture\nPASS invalid content handling\nPASS persisted image\nPASS text and image copy\nPASS reorder and permanent delete\nPASS compact overlap layout at multiple widths\nPASS screenshots\n");
+                "PASS native WPF startup and minimal canvas\nPASS edge reveal, delayed hide and minimize recovery\nPASS non-activating reveal and native topmost ordering\nPASS real clipboard text and bitmap capture\nPASS invalid content handling\nPASS persisted image\nPASS text and image copy\nPASS free dragging, saved rope positions and permanent delete\nPASS compact overlap layout at multiple widths\nPASS screenshots\n");
         }
         finally
         {
@@ -70,9 +70,9 @@ public partial class MainWindow
         SmokeChecks.Assert(IsVisible && presented && Math.Abs(Slide.Y) < 0.1, "Top edge did not reveal the rope");
         SmokeChecks.Assert(NativeMethods.GetForegroundWindow() == foreground, "Hover reveal stole keyboard focus");
         SmokeChecks.Assert((NativeMethods.GetWindowLongPtr(handle, -20).ToInt64() & 0x8L) != 0, "Revealed dock is not topmost");
-        AdvancePointer(dockBounds.Left + 200, dockBounds.Top + dockBounds.Height + 80, now + 349);
+        AdvancePointer(dockBounds.Left + 200, dockBounds.Top + dockBounds.Height + 80, now + 199);
         SmokeChecks.Assert(presented, "Leave grace period was ignored");
-        AdvancePointer(dockBounds.Left + 200, dockBounds.Top + dockBounds.Height + 80, now + 350);
+        AdvancePointer(dockBounds.Left + 200, dockBounds.Top + dockBounds.Height + 80, now + 200);
         await Task.Delay(280);
         SmokeChecks.Assert(!IsVisible && !presented, "Leaving did not tuck the rope away");
         AdvancePointer(dockBounds.Left + 200, dockBounds.Top + 80, now + 700);
@@ -129,8 +129,15 @@ public partial class MainWindow
         await Copy(notebook.Notes[0]);
         SmokeChecks.Assert(Clipboard.ContainsImage(), "Bitmap copy failed");
         var imageId = notebook.Notes[0].Id;
-        Reorder(imageId, notebook.Notes[2].Id);
-        SmokeChecks.Assert(notebook.Notes[2].Id == imageId, "Reorder failed");
+        var imageCard = (NoteCard)NotesPanel.Children[0];
+        BeginCardDrag(imageCard, new Point(40, 60));
+        MoveFloatingCard(new NativeMethods.NativePoint { X = (int)dockBounds.Left + 600, Y = (int)dockBounds.Top + 400 });
+        await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+        SmokeChecks.Assert(floatingCard is { IsVisible: true }, "Floating drag preview missing");
+        SmokeChecks.Snapshot(floatingCard!, Path.Combine(output, "06-drag-preview.png"));
+        EndCardDrag(imageCard, commit: false);
+        SaveCardPosition(imageId, ClotheslineLayout.LeftForPosition(ActualWidth, 0.72));
+        SmokeChecks.Assert(Math.Abs(store.Load().Notebook.Notes.First(n => n.Id == imageId).RopePosition!.Value - 0.72) < 0.001, "Free position was not saved");
         var removed = notebook.Notes[1].Id;
         Delete((NoteCard)NotesPanel.Children[1]);
         SmokeChecks.Assert(notebook.Notes.Count == 2 && store.Load().Notebook.Notes.All(n => n.Id != removed), "Delete did not persist");
@@ -142,12 +149,12 @@ public partial class MainWindow
             Width = width;
             UpdateLayout();
             ArrangeCards();
-            var previous = -1.0;
             foreach (NoteCard card in NotesPanel.Children)
             {
                 var x = Canvas.GetLeft(card);
-                SmokeChecks.Assert(x >= previous && x + card.Width <= width - ClotheslineLayout.RightInset + 0.1, "Overlapping card left monitor bounds");
-                previous = x;
+                SmokeChecks.Assert(x >= ClotheslineLayout.FirstCardLeft && x + card.Width <= width - ClotheslineLayout.RightInset + 0.1, "Overlapping card left monitor bounds");
+                if (card.Note.RopePosition is double anchor)
+                    SmokeChecks.Assert(Math.Abs(x - ClotheslineLayout.LeftForPosition(width, anchor)) < 0.1, "Manual anchor did not adapt to monitor width");
             }
             SmokeChecks.Snapshot(this, Path.Combine(output, $"02-overlap-{width}.png"));
         }
@@ -160,6 +167,11 @@ public partial class MainWindow
         await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
         SmokeChecks.Snapshot(detail, Path.Combine(output, "04-detail.png"));
         detail.Close();
+        var updater = new UpdateWindow(checkOnLoad: false) { Owner = this };
+        updater.Show();
+        await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+        SmokeChecks.Snapshot(updater, Path.Combine(output, "05-updater.png"));
+        updater.Close();
     }
 
     internal void CloseForSmoke() { exiting = true; Close(); }

@@ -12,6 +12,40 @@ public partial class App : Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        if (e.Args.Length >= 2 && e.Args[0] == "--apply-update")
+        {
+            try { await UpdateHelper.Run(e.Args[1]); Shutdown(0); }
+            catch (Exception ex)
+            {
+                if (UpdateCoordinator.IsWorkspaceFile(e.Args[1], "plan.json"))
+                    File.WriteAllText(Path.Combine(Path.GetDirectoryName(e.Args[1])!, "error.txt"), ex.Message);
+                Shutdown(1);
+            }
+            return;
+        }
+        if (e.Args.Length >= 2 && e.Args[0] == "--update-smoke-startup")
+        { UpdateCoordinator.MarkHealthy(e.Args[1]); Shutdown(0); return; }
+        if (e.Args.Length >= 2 && e.Args[0] == "--update-parent-smoke")
+        {
+            try { await UpdateSmokeChecks.RunParent(e.Args[1]); Shutdown(0); }
+            catch (Exception ex)
+            {
+                File.WriteAllText(Path.Combine(e.Args[1], "parent-error.txt"), ex.ToString());
+                Shutdown(1);
+            }
+            return;
+        }
+        if (e.Args.Length >= 2 && e.Args[0] == "--updater-smoke")
+        {
+            try { await UpdateSmokeChecks.Run(e.Args[1]); Shutdown(0); }
+            catch (Exception ex)
+            {
+                Directory.CreateDirectory(e.Args[1]);
+                File.WriteAllText(Path.Combine(e.Args[1], "failure.txt"), ex.ToString());
+                Shutdown(1);
+            }
+            return;
+        }
         if (e.Args.Length > 0 && e.Args[0] == "--smoke-test")
         {
             var output = e.Args.Length > 1 ? e.Args[1] : "smoke-results";
@@ -41,6 +75,7 @@ public partial class App : Application
             var window = new MainWindow(store, loaded.Notebook);
             MainWindow = window;
             window.Show();
+            if (e.Args.Length >= 2 && e.Args[0] == "--update-health") UpdateCoordinator.MarkHealthy(e.Args[1]);
             if (loaded.RecoveredFromBackup)
                 MessageBox.Show(window, "上次保存的数据损坏，已从备份恢复。原文件也已保留在数据目录中。", "便签已恢复");
         }
@@ -50,8 +85,6 @@ public partial class App : Application
             Shutdown(1);
         }
     }
-
-
     protected override void OnExit(ExitEventArgs e)
     {
         singleInstance?.Dispose();

@@ -1,0 +1,21 @@
+<Window x:Class="QuickNote.UpdateWindow"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ Title="晾一会 · 应用更新" Width="470" Height="340" ResizeMode="NoResize"
+ WindowStartupLocation="CenterScreen" Background="#FAF7EE" Closing="OnClosing">
+ <Grid Margin="24">
+  <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+  <StackPanel>
+   <TextBlock Text="让晾一会，保持新鲜。" FontSize="21" FontWeight="Light" />
+   <TextBlock x:Name="VersionLabel" Margin="0,8,0,0" Foreground="#8A8E81" FontSize="11" />
+  </StackPanel>
+  <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,18,0,12">
+   <TextBlock x:Name="Status" Text="正在检查更新…" FontSize="13" TextWrapping="Wrap" LineHeight="23" />
+  </ScrollViewer>
+  <ProgressBar x:Name="DownloadProgress" Grid.Row="2" Height="4" Minimum="0" Maximum="100" Visibility="Collapsed" Margin="0,0,0,18" />
+  <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
+   <Button x:Name="CancelButton" Content="关闭" Click="OnCancel" Margin="0,0,8,0" Padding="16,9" />
+   <Button x:Name="ActionButton" Content="检查更新" Click="OnAction" IsEnabled="False" Background="#DEE7D1" Padding="18,9" />
+  </StackPanel>
+ </Grid>
+</Window>

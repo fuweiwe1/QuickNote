@@ -111,6 +111,8 @@ public sealed class NotebookStore
                 note.Text is null || note.Label is null || note.Text.Length > MaxTextLength ||
                 note.Color is < 0 or > 4 || !Enum.IsDefined(note.Kind))
                 throw new InvalidDataException("便签数据格式异常。");
+            if (note.RopePosition is double position && (!double.IsFinite(position) || position < 0 || position > 1))
+                throw new InvalidDataException("便签在绳子上的位置无效。");
             if (note.Kind == NoteKind.Image)
             {
                 if (note.ImageFile is null) throw new InvalidDataException("图片便签缺少文件路径。");

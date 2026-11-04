@@ -1,0 +1,75 @@
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Security.Cryptography;
+using System.Threading.Tasks;
+using QuickNote.Core;
+
+namespace QuickNote;
+
+internal static class UpdateSmokeChecks
+{
+    internal static async Task RunParent(string workspace)
+    {
+        if (!UpdateCoordinator.IsWorkspaceFile(Path.Combine(workspace, "package.exe"), "package.exe"))
+            throw new InvalidDataException("Invalid test workspace");
+        var staged = Path.Combine(workspace, "package.exe");
+        using var input = File.OpenRead(staged);
+        var package = new UpdatePackage(UpdateCoordinator.CurrentVersion, UpdateCoordinator.Flavor ?? PackageFlavor.Small, "",
+            new Uri("https://github.com/fuweiwe1/QuickNote/releases/download/v0.3.0/unused.exe"), input.Length,
+            Convert.ToHexString(SHA256.HashData(input)));
+        await UpdateCoordinator.StartHelper(workspace, package, smokeMode: true);
+    }
+
+    internal static async Task Run(string output)
+    {
+        Directory.CreateDirectory(output);
+        foreach (var broken in new[] { false, true })
+        {
+            var workspace = UpdateCoordinator.CreateWorkspace();
+            try
+            {
+                var program = Path.Combine(workspace, "program");
+                Directory.CreateDirectory(program);
+                var target = Path.Combine(program, "QuickNote.exe");
+                File.Copy(Environment.ProcessPath!, target);
+                var staged = Path.Combine(workspace, "package.exe");
+                if (broken) File.WriteAllBytes(staged, new byte[] { 77, 90, 0, 0, 0, 0, 0, 0 });
+                else File.Copy(Environment.ProcessPath!, staged);
+                var notebook = Path.Combine(workspace, "notebook.json");
+                File.WriteAllText(notebook, "便签和图片不参与程序更新");
+                var start = new ProcessStartInfo(target) { UseShellExecute = false, WorkingDirectory = program };
+                start.ArgumentList.Add("--update-parent-smoke"); start.ArgumentList.Add(workspace);
+                using var parent = Process.Start(start) ?? throw new Exception("Cannot launch parent fixture");
+                var finished = false;
+                for (var attempt = 0; attempt < 400; attempt++)
+                {
+                    if (File.Exists(Path.Combine(workspace, "parent-error.txt")))
+                        throw new Exception(File.ReadAllText(Path.Combine(workspace, "parent-error.txt")));
+                    if (File.Exists(Path.Combine(workspace, broken ? "error.txt" : "complete"))) { finished = true; break; }
+                    if (!broken && File.Exists(Path.Combine(workspace, "error.txt")))
+                        throw new Exception(File.ReadAllText(Path.Combine(workspace, "error.txt")));
+                    await Task.Delay(100);
+                }
+                SmokeChecks.Assert(finished, "Update handoff timed out");
+                await parent.WaitForExitAsync();
+                SmokeChecks.Assert(parent.ExitCode == 0, "Parent did not exit cleanly");
+                using var original = File.OpenRead(Environment.ProcessPath!);
+                using var result = File.OpenRead(target);
+                SmokeChecks.Assert(SHA256.HashData(original).AsSpan().SequenceEqual(SHA256.HashData(result)), "Installed or restored executable differs");
+                SmokeChecks.Assert(File.ReadAllText(notebook) == "便签和图片不参与程序更新", "Update touched notes");
+                SmokeChecks.Assert(File.Exists(target + (broken ? ".failed" : ".previous")), "Missing rollback or backup evidence");
+            }
+            finally
+            {
+                // The helper may still be returning through its own executable; leave locked files for later cleanup.
+                await Task.Delay(500);
+                try { Directory.Delete(workspace, recursive: true); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+        }
+        File.WriteAllText(Path.Combine(output, "passed.txt"),
+            "PASS real parent/helper exit handoff\nPASS replace locked running executable after parent exit\nPASS restart and healthy-start handshake\nPASS rollback when replacement cannot launch\nPASS notes remain untouched\n");
+    }
+}
