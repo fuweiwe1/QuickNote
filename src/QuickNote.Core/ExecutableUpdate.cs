@@ -16,20 +16,25 @@ public static class ExecutableUpdate
             throw new InvalidDataException("更新文件校验失败，原程序未改变。");
     }
 
-    public static void Apply(string staged, string target, long size, string sha256)
+    public static void Apply(string staged, string target, long size, string sha256, Action<string>? trace = null)
     {
         if (!target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) || !File.Exists(target) ||
             Path.GetFullPath(staged).Equals(Path.GetFullPath(target), StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("无法更新此程序路径。");
+        trace?.Invoke("verifying staged file");
         Verify(staged, size, sha256);
         var temporary = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(target))!, ".QuickNote-new-" + Guid.NewGuid().ToString("N") + ".exe");
         try
         {
+            trace?.Invoke("copying replacement");
             using (var source = File.OpenRead(staged))
             using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             { source.CopyTo(output); output.Flush(flushToDisk: true); }
+            trace?.Invoke("verifying replacement");
             Verify(temporary, size, sha256);
+            trace?.Invoke("replacing executable");
             File.Replace(temporary, target, target + ".previous", ignoreMetadataErrors: true);
+            trace?.Invoke("replacement committed");
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }

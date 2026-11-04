@@ -47,6 +47,8 @@ internal static class UpdateSmokeChecks
                 using var parent = Process.Start(start) ?? throw new Exception("Cannot launch parent fixture");
                 var errors = parent.StandardError.ReadToEndAsync();
                 var messages = parent.StandardOutput.ReadToEndAsync();
+                var parentClosed = false;
+                var parentExitCode = -1;
                 var finished = false;
                 for (var attempt = 0; attempt < 400; attempt++)
                 {
@@ -55,19 +57,25 @@ internal static class UpdateSmokeChecks
                     if (File.Exists(Path.Combine(workspace, broken ? "error.txt" : "complete"))) { finished = true; break; }
                     if (!broken && File.Exists(Path.Combine(workspace, "error.txt")))
                         throw new Exception(File.ReadAllText(Path.Combine(workspace, "error.txt")));
-                    if (parent.HasExited && !File.Exists(Path.Combine(workspace, "ready")))
-                        throw new Exception($"Parent fixture exited before helper readiness ({parent.ExitCode}).\n" + await errors + await messages);
+                    if (!parentClosed && parent.HasExited)
+                    {
+                        parentExitCode = parent.ExitCode;
+                        if (!File.Exists(Path.Combine(workspace, "ready")))
+                            throw new Exception($"Parent fixture exited before helper readiness ({parentExitCode}).\n" + await errors + await messages);
+                        parent.Dispose();
+                        parentClosed = true;
+                    }
                     await Task.Delay(100);
                 }
                 if (!finished)
                 {
                     var trace = Path.Combine(workspace, "trace.txt");
-                    throw new Exception("Update handoff timed out. Parent exited: " + parent.HasExited + "; files: " +
+                    throw new Exception("Update handoff timed out. Parent exited: " + (parentClosed || parent.HasExited) + "; files: " +
                         string.Join(",", Directory.GetFiles(workspace).Select(Path.GetFileName)) + "\n" +
                         (File.Exists(trace) ? File.ReadAllText(trace) : "no child trace"));
                 }
-                await parent.WaitForExitAsync();
-                SmokeChecks.Assert(parent.ExitCode == 0, "Parent did not exit cleanly");
+                if (!parentClosed) { await parent.WaitForExitAsync(); parentExitCode = parent.ExitCode; }
+                SmokeChecks.Assert(parentExitCode == 0, "Parent did not exit cleanly");
                 using var original = File.OpenRead(Environment.ProcessPath!);
                 using var result = File.OpenRead(target);
                 SmokeChecks.Assert(SHA256.HashData(original).AsSpan().SequenceEqual(SHA256.HashData(result)), "Installed or restored executable differs");

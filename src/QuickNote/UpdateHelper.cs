@@ -47,18 +47,26 @@ internal static class UpdateHelper
             File.WriteAllText(Path.Combine(workspace, "ready"), "ready");
             if (plan.SmokeMode) File.AppendAllText(Path.Combine(workspace, "trace.txt"), "helper ready\n");
             using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90))) await parent.WaitForExitAsync(timeout.Token);
+            parent.Dispose();
             released = true;
             if (plan.SmokeMode) File.AppendAllText(Path.Combine(workspace, "trace.txt"), "parent exited\n");
             for (var attempt = 0; ; attempt++)
             {
-                try { ExecutableUpdate.Apply(staged, plan.Target, plan.Size, plan.Sha256); break; }
+                try
+                {
+                    ExecutableUpdate.Apply(staged, plan.Target, plan.Size, plan.Sha256,
+                        plan.SmokeMode ? message => File.AppendAllText(Path.Combine(workspace, "trace.txt"), message + "\n") : null);
+                    break;
+                }
                 catch (IOException) when (attempt < 15) { await Task.Delay(200); }
             }
             applied = true;
+            if (plan.SmokeMode) File.AppendAllText(Path.Combine(workspace, "trace.txt"), "starting replacement\n");
             var start = new ProcessStartInfo(plan.Target) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(plan.Target)! };
             start.ArgumentList.Add(plan.SmokeMode ? "--update-smoke-startup" : "--update-health");
             start.ArgumentList.Add(health);
             restarted = Process.Start(start) ?? throw new IOException("新版启动失败。");
+            if (plan.SmokeMode) File.AppendAllText(Path.Combine(workspace, "trace.txt"), "replacement launched: " + restarted.Id + "\n");
             for (var i = 0; i < 200; i++)
             {
                 if (File.Exists(health))
