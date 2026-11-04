@@ -15,6 +15,7 @@ public partial class UpdateWindow : Window
     private bool downloading;
     private bool installing;
     private bool readyToRestart;
+    internal Func<bool>? BeforeInstall { get; set; }
 
     public UpdateWindow() : this(true) { }
     internal UpdateWindow(bool checkOnLoad)
@@ -58,6 +59,11 @@ public partial class UpdateWindow : Window
             var progress = new Progress<double>(value => { DownloadProgress.Value = value * 100; Status.Text = $"正在下载 {available.Version}，{value:P0}"; });
             await UpdateCoordinator.Client.DownloadAsync(available, Path.Combine(workspace, "package.exe"), progress, cancellation.Token);
             downloading = false;
+            if (BeforeInstall?.Invoke() == false)
+            {
+                Status.Text = "更新文件已下载。请先处理便签的未保存修改，再重试更新。";
+                return;
+            }
             installing = true;
             CancelButton.IsEnabled = false;
             Status.Text = "正在准备安装，完成后将自动重启…";

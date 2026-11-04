@@ -6,7 +6,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <AssemblyName>QuickNote</AssemblyName>
-    <Version>0.3.0</Version>
+    <Version>0.3.1</Version>
     <QuickNoteFlavor Condition="'$(QuickNoteFlavor)' == ''">Development</QuickNoteFlavor>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets/app.ico</ApplicationIcon>

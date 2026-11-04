@@ -278,9 +278,12 @@ public partial class MainWindow : Window
 
     private void Delete(NoteCard card)
     {
+        if (!CloseNoteWindow(card.Note.Id)) return;
+        // Saving from the close prompt can rebuild the rope and replace this card's visual.
+        var currentCard = NotesPanel.Children.Cast<NoteCard>().FirstOrDefault(current => current.Note.Id == card.Note.Id);
         var notes = notebook.Notes.Where(n => n.Id != card.Note.Id).ToList();
         if (notes.Count == notebook.Notes.Count || !Commit(notebook with { Notes = notes })) return;
-        AnimateTear(card);
+        if (currentCard is not null) AnimateTear(currentCard);
         RenderNotes();
     }
 
@@ -323,28 +326,14 @@ public partial class MainWindow : Window
 
     private void OpenEditor(Note note)
     {
-        dock.Hold();
-        try
-        {
-            var dialog = new NoteWindow(note, store) { Owner = this };
-            if (dialog.ShowDialog() != true || dialog.Result is not { } result) return;
-            var notes = notebook.Notes.Select(n => n.Id == result.Id ? result : n).ToList();
-            if (Commit(notebook with { Notes = notes })) RenderNotes();
-        }
-        catch (Exception ex) when (IsContentError(ex)) { NotifyError("暂时无法打开：" + FriendlyError(ex)); }
-        finally { dock.Release(Environment.TickCount64); }
+        OpenNoteWindow(note);
     }
 
     private void OpenBlank()
     {
+        if (updating) return;
         Reveal();
-        dock.Hold();
-        try
-        {
-            var dialog = new NoteWindow(new Note { Color = notebook.Notes.Count % 5 }, store) { Owner = this };
-            if (dialog.ShowDialog() == true && dialog.Result is { } result) AddNote(result);
-        }
-        finally { dock.Release(Environment.TickCount64); }
+        OpenNoteWindow(new Note { Color = notebook.Notes.Count % 5 }, isNew: true);
     }
 
     private void NotifyError(string text) => tray?.ShowBalloonTip(5000, "晾一会", text, Forms.ToolTipIcon.Info);
@@ -392,11 +381,13 @@ public partial class MainWindow : Window
     { var item = new MenuItem { Header = text }; item.Click += (_, _) => action(); menu.Items.Add(item); }
     private void OpenUpdater()
     {
+        if (updating) return;
+        updating = true;
         Reveal();
         dock.Hold();
         var restart = false;
-        try { restart = new UpdateWindow { Owner = this }.ShowDialog() == true; }
-        finally { dock.Release(Environment.TickCount64); }
+        try { restart = new UpdateWindow { Owner = this, BeforeInstall = CloseNoteWindows }.ShowDialog() == true; }
+        finally { updating = false; dock.Release(Environment.TickCount64); }
         if (restart) Exit();
     }
     private void OpenDataFolder()
@@ -416,5 +407,9 @@ public partial class MainWindow : Window
         if (source is { IsDisposed: false }) source.RemoveHook(WindowMessage);
         tray?.Dispose();
     }
-    private void Exit() { exiting = true; Close(); Application.Current.Shutdown(); }
+    private void Exit()
+    {
+        if (updating || !CloseNoteWindows()) return;
+        exiting = true; Close(); Application.Current.Shutdown();
+    }
 }

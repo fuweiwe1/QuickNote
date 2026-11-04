@@ -28,7 +28,7 @@ internal static class SmokeChecks
             await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
             await window.CheckInteractions(output);
             File.WriteAllText(Path.Combine(output, "passed.txt"),
-                "PASS native WPF startup and minimal canvas\nPASS edge reveal, delayed hide and minimize recovery\nPASS non-activating reveal and native topmost ordering\nPASS real clipboard text and bitmap capture\nPASS invalid content handling\nPASS persisted image\nPASS text and image copy\nPASS free dragging, saved rope positions and permanent delete\nPASS compact overlap layout at multiple widths\nPASS screenshots\n");
+                "PASS native WPF startup and minimal canvas\nPASS edge reveal, delayed hide and minimize recovery\nPASS non-activating reveal and native topmost ordering\nPASS real clipboard text and bitmap capture\nPASS invalid content handling\nPASS persisted image\nPASS text and image copy\nPASS free dragging, saved rope positions and permanent delete\nPASS compact overlap layout at multiple widths\nPASS concurrent text/image editors, independent saves and dirty-close protection\nPASS screenshots\n");
         }
         finally
         {
@@ -167,6 +167,7 @@ public partial class MainWindow
         ApplyScreen();
         await Task.Delay(650);
         SmokeChecks.Snapshot(this, Path.Combine(output, "03-edge-clothesline.png"));
+        await CheckMultipleNoteWindows(output);
         var detail = new NoteWindow(notebook.Notes[0], store) { Owner = this };
         detail.Show();
         await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);

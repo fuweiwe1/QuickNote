@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -9,9 +10,12 @@ namespace QuickNote;
 
 public partial class NoteWindow : Window
 {
-    private readonly Note note;
+    private Note note;
     private readonly NotebookStore store;
     public Note? Result { get; private set; }
+    internal Func<Note, bool>? SaveAction { get; set; }
+    internal Func<MessageBoxResult>? CloseDecision { get; set; }
+    internal bool HasUnsavedChanges => note.Kind == NoteKind.Text && Editor.Text != note.Text;
     private double zoom = 1;
 
     public NoteWindow(Note note, NotebookStore store)
@@ -32,13 +36,44 @@ public partial class NoteWindow : Window
             Status.Text = "Ctrl + 滚轮缩放 · Esc 关闭";
         }
         else Loaded += (_, _) => { Editor.Focus(); Editor.CaretIndex = Editor.Text.Length; };
+        UpdateTitle();
+        Editor.TextChanged += (_, _) =>
+        {
+            UpdateTitle();
+            Status.Text = HasUnsavedChanges ? "尚未保存 · Ctrl+Enter 保存" : "Ctrl+Enter 保存 · Esc 关闭";
+        };
     }
 
     private void OnSave(object sender, RoutedEventArgs e)
     {
-        if (string.IsNullOrWhiteSpace(Editor.Text)) { Status.Text = "先写一点内容吧"; return; }
-        Result = note with { Text = Editor.Text };
-        DialogResult = true;
+        SaveChanges();
+    }
+    private bool SaveChanges()
+    {
+        if (string.IsNullOrWhiteSpace(Editor.Text)) { Status.Text = "先写一点内容吧"; return false; }
+        var edited = note with { Text = Editor.Text };
+        if (SaveAction?.Invoke(edited) != true)
+        { Status.Text = "保存未完成，修改仍保留在这里。"; return false; }
+        note = edited;
+        Result = edited;
+        UpdateTitle();
+        Status.Text = "已保存 · 可以继续编辑或查看其他便签";
+        return true;
+    }
+    private void UpdateTitle()
+    {
+        var text = note.Kind == NoteKind.Image ? note.Label : Editor.Text.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        if (text.Length == 0) text = "新便签";
+        if (text.Length > 24) text = text[..24] + "…";
+        Title = (HasUnsavedChanges ? "* " : "") + text + " · QuickNote";
+    }
+    private void OnClosing(object? sender, CancelEventArgs e)
+    {
+        if (!HasUnsavedChanges) return;
+        var decision = CloseDecision?.Invoke() ?? MessageBox.Show(this, "保存这张便签的修改后关闭？", "便签尚未保存",
+            MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+        if (decision is not (MessageBoxResult.Yes or MessageBoxResult.No) ||
+            (decision == MessageBoxResult.Yes && !SaveChanges())) e.Cancel = true;
     }
     private async void OnCopy(object sender, RoutedEventArgs e)
     {

@@ -18,7 +18,7 @@ internal static class UpdateSmokeChecks
         var staged = Path.Combine(workspace, "package.exe");
         using var input = File.OpenRead(staged);
         var package = new UpdatePackage(UpdateCoordinator.CurrentVersion, UpdateCoordinator.Flavor ?? PackageFlavor.Small, "",
-            new Uri("https://github.com/fuweiwe1/QuickNote/releases/download/v0.3.0/unused.exe"), input.Length,
+            new Uri($"https://github.com/fuweiwe1/QuickNote/releases/download/v{UpdateCoordinator.CurrentVersion}/unused.exe"), input.Length,
             Convert.ToHexString(SHA256.HashData(input)));
         await UpdateCoordinator.StartHelper(workspace, package, smokeMode: true,
             failStartup: File.Exists(Path.Combine(workspace, "simulate-start-failure")));
