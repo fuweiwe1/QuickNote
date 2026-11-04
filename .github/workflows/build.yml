@@ -17,7 +17,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-      - name: Verify local persistence and recovery
+      - name: Verify persistence, overlap and edge docking
         run: dotnet run --project tests/QuickNote.Core.Tests -c Release
   windows:
     needs: storage-checks

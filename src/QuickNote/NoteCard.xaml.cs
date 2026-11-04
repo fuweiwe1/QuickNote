@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -14,6 +15,7 @@ namespace QuickNote;
 public partial class NoteCard : UserControl
 {
     public Note Note { get; }
+    internal int RestingZIndex { get; set; }
     private readonly double restingAngle;
     private Point dragStart;
     private bool dragArmed;
@@ -21,6 +23,7 @@ public partial class NoteCard : UserControl
     public event Action<NoteCard>? DeleteRequested;
     public event Action<NoteCard>? OpenRequested;
     public event Action<Guid, Guid>? ReorderRequested;
+    public event Action<bool>? InteractionChanged;
 
     public NoteCard(Note note, NotebookStore store)
     {
@@ -74,12 +77,12 @@ public partial class NoteCard : UserControl
 
     private void OnHover(object sender, MouseEventArgs e)
     {
-        Panel.SetZIndex(this, 20);
-        AnimateHover(1.09, 0, -3);
+        Panel.SetZIndex(this, int.MaxValue);
+        AnimateHover(1.16, 0, 0);
     }
     private void OnLeave(object sender, MouseEventArgs e)
     {
-        Panel.SetZIndex(this, 0);
+        Panel.SetZIndex(this, RestingZIndex);
         AnimateHover(1, restingAngle, 0);
     }
     private void AnimateHover(double scale, double angle, double y)
@@ -92,6 +95,12 @@ public partial class NoteCard : UserControl
         CardOffset.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(y, time) { EasingFunction = ease });
     }
     private void OnCopy(object sender, RoutedEventArgs e) { e.Handled = true; CopyRequested?.Invoke(this); }
+    internal async Task ShowCopied()
+    {
+        CopyButton.Content = "已复制";
+        await Task.Delay(1100);
+        CopyButton.Content = "复制";
+    }
     private void OnDelete(object sender, RoutedEventArgs e) { e.Handled = true; DeleteRequested?.Invoke(this); }
     private void OnOpen(object sender, RoutedEventArgs e) { e.Handled = true; OpenRequested?.Invoke(this); }
     private void OnMouseDown(object sender, MouseButtonEventArgs e)
@@ -116,7 +125,9 @@ public partial class NoteCard : UserControl
         var point = e.GetPosition(this);
         if (Math.Abs(point.X - dragStart.X) + Math.Abs(point.Y - dragStart.Y) < 10) return;
         dragArmed = false;
-        DragDrop.DoDragDrop(this, new DataObject("QuickNote/NoteId", Note.Id.ToString()), DragDropEffects.Move);
+        InteractionChanged?.Invoke(true);
+        try { DragDrop.DoDragDrop(this, new DataObject("QuickNote/NoteId", Note.Id.ToString()), DragDropEffects.Move); }
+        finally { InteractionChanged?.Invoke(false); }
     }
     private void OnDragOver(object sender, DragEventArgs e)
     {

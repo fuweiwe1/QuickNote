@@ -18,7 +18,7 @@ public sealed record Note
 
 public sealed record Preferences
 {
-    public bool AlwaysOnTop { get; init; } = true;
+    public string? MonitorDevice { get; init; }
     public double? Left { get; init; }
     public double? Top { get; init; }
 }

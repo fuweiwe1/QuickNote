@@ -3,6 +3,8 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -10,26 +12,29 @@ using QuickNote.Core;
 
 namespace QuickNote;
 
-// Explicit developer-only mode: uses a temporary notebook, never the user's data directory.
 internal static class SmokeChecks
 {
     internal static async Task Run(string output)
     {
         Directory.CreateDirectory(output);
         var temporary = Path.Combine(Path.GetTempPath(), "QuickNote.UI." + Guid.NewGuid().ToString("N"));
+        MainWindow? window = null;
         try
         {
             var store = new NotebookStore(temporary);
-            var window = new MainWindow(store, new Notebook());
+            window = new MainWindow(store, new Notebook(), automated: true);
             Application.Current.MainWindow = window;
             window.Show();
             await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
             await window.CheckInteractions(output);
             File.WriteAllText(Path.Combine(output, "passed.txt"),
-                "PASS native WPF startup and resources\nPASS real clipboard text and bitmap capture\nPASS oversized text and corrupt image handling\nPASS persisted image\nPASS text and image copy\nPASS search\nPASS reorder\nPASS delete and undo\nPASS fold and reveal\nPASS populated and detail screenshots\n");
-            window.CloseForSmoke();
+                "PASS native WPF startup and minimal canvas\nPASS edge reveal, delayed hide and minimize recovery\nPASS non-activating reveal and native topmost ordering\nPASS real clipboard text and bitmap capture\nPASS invalid content handling\nPASS persisted image\nPASS text and image copy\nPASS reorder and permanent delete\nPASS compact overlap layout at multiple widths\nPASS screenshots\n");
         }
-        finally { if (Directory.Exists(temporary)) Directory.Delete(temporary, recursive: true); }
+        finally
+        {
+            window?.CloseForSmoke();
+            if (Directory.Exists(temporary)) Directory.Delete(temporary, recursive: true);
+        }
     }
 
     internal static void Assert(bool condition, string message)
@@ -57,12 +62,32 @@ public partial class MainWindow
 {
     internal async Task CheckInteractions(string output)
     {
-        SmokeChecks.Assert(Topmost && notebook.Notes.Count == 0, "Unexpected initial state");
+        SmokeChecks.Assert(Topmost && notebook.Notes.Count == 0 && !IsVisible, "Dock must start tucked away");
+        var foreground = NativeMethods.GetForegroundWindow();
+        var now = Environment.TickCount64;
+        AdvancePointer(dockBounds.Left + 200, dockBounds.Top + 1, now);
+        await Task.Delay(320);
+        SmokeChecks.Assert(IsVisible && presented && Math.Abs(Slide.Y) < 0.1, "Top edge did not reveal the rope");
+        SmokeChecks.Assert(NativeMethods.GetForegroundWindow() == foreground, "Hover reveal stole keyboard focus");
+        SmokeChecks.Assert((NativeMethods.GetWindowLongPtr(handle, -20).ToInt64() & 0x8L) != 0, "Revealed dock is not topmost");
+        AdvancePointer(dockBounds.Left + 200, dockBounds.Top + dockBounds.Height + 80, now + 349);
+        SmokeChecks.Assert(presented, "Leave grace period was ignored");
+        AdvancePointer(dockBounds.Left + 200, dockBounds.Top + dockBounds.Height + 80, now + 350);
+        await Task.Delay(280);
+        SmokeChecks.Assert(!IsVisible && !presented, "Leaving did not tuck the rope away");
+        AdvancePointer(dockBounds.Left + 200, dockBounds.Top + 80, now + 700);
+        SmokeChecks.Assert(!presented, "Invisible card area revealed the dock");
+        AdvancePointer(dockBounds.Left + 200, dockBounds.Top + 1, now + 800);
+        await Task.Delay(320);
+        NativeMethods.ShowWindow(handle, 6);
+        AdvancePointer(dockBounds.Left + 200, dockBounds.Top + 1, now + 1200);
+        await Task.Delay(320);
+        SmokeChecks.Assert(!NativeMethods.IsIconic(handle) && NativeMethods.IsWindowVisible(handle), "Edge reveal did not recover a minimized window");
         SmokeChecks.Snapshot(this, Path.Combine(output, "01-empty.png"));
         Clipboard.SetText("你好，周五下午可以安排沟通。\n\n我整理好资料后发你，有任何问题随时联系。", TextDataFormat.UnicodeText);
         await Capture();
         SmokeChecks.Assert(notebook.Notes.Count == 1, "Text capture failed");
-        Clipboard.SetText("灵感，先放在这里。\n\n给灵感留一条晾衣绳：\n轻一点，慢一点，\n让琐碎也有自己的位置。", TextDataFormat.UnicodeText);
+        Clipboard.SetText("灵感，先放在这里。\n\n轻一点，慢一点，\n让琐碎也有自己的位置。", TextDataFormat.UnicodeText);
         await Capture();
         var drawing = new DrawingVisual();
         using (var context = drawing.RenderOpen())
@@ -77,6 +102,19 @@ public partial class MainWindow
         Clipboard.SetImage(bitmap);
         await Capture();
         SmokeChecks.Assert(notebook.Notes.Count == 3 && notebook.Notes[0].Kind == NoteKind.Image, "Image capture failed");
+        var normal = new Window { Width = 500, Height = 260, ShowActivated = false, ShowInTaskbar = false,
+            Content = new System.Windows.Controls.Border { Background = Brushes.SlateBlue } };
+        normal.Show();
+        try
+        {
+            var otherHandle = new WindowInteropHelper(normal).Handle;
+            NativeMethods.SetWindowPos(otherHandle, IntPtr.Zero, (int)dockBounds.Left + 180, (int)dockBounds.Top + 60, 520, 260, 0x0010 | 0x0040);
+            await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+            var point = ((NoteCard)NotesPanel.Children[0]).PointToScreen(new Point(50, 80));
+            var hit = NativeMethods.WindowFromPoint(new NativeMethods.NativePoint { X = (int)point.X, Y = (int)point.Y });
+            SmokeChecks.Assert(hit == handle, "A normal application window covered the revealed rope");
+        }
+        finally { normal.Close(); }
         SmokeChecks.Assert(File.Exists(store.ImagePath(notebook.Notes[0].ImageFile!)), "Image not saved");
         Clipboard.SetText(new string('x', NotebookStore.MaxTextLength + 1));
         await Capture();
@@ -90,39 +128,39 @@ public partial class MainWindow
         SmokeChecks.Assert(Clipboard.GetText().StartsWith("你好"), "Text copy failed");
         await Copy(notebook.Notes[0]);
         SmokeChecks.Assert(Clipboard.ContainsImage(), "Bitmap copy failed");
-        SearchBox.Text = "不存在的关键词";
-        SmokeChecks.Assert(NotesPanel.Children.Count == 0 && EmptyPanel.IsVisible, "Search empty state failed");
-        SearchBox.Text = "周五";
-        SmokeChecks.Assert(NotesPanel.Children.Count == 1, "Text search failed");
-        SearchBox.Clear();
         var imageId = notebook.Notes[0].Id;
         Reorder(imageId, notebook.Notes[2].Id);
         SmokeChecks.Assert(notebook.Notes[2].Id == imageId, "Reorder failed");
+        var removed = notebook.Notes[1].Id;
         Delete((NoteCard)NotesPanel.Children[1]);
-        SmokeChecks.Assert(notebook.Notes.Count == 2, "Delete failed");
-        OnUndo(this, new RoutedEventArgs());
-        SmokeChecks.Assert(notebook.Notes.Count == 3 && store.Load().Notebook.Notes.Count == 3, "Undo did not persist");
-        SetFolded(true);
-        SmokeChecks.Assert(Height == 108, "Fold failed");
-        SetFolded(false);
-        Hide(); Reveal();
-        await Task.Delay(800);
-        Toast.Visibility = Visibility.Collapsed;
-        SmokeChecks.Snapshot(this, Path.Combine(output, "02-clothesline.png"));
+        SmokeChecks.Assert(notebook.Notes.Count == 2 && store.Load().Notebook.Notes.All(n => n.Id != removed), "Delete did not persist");
+        for (var i = 0; i < 16; i++)
+            AddNote(new Note { Text = $"灵感 {i + 1}\n\n把一闪而过的想法，\n先轻轻夹在这里。", Color = i % 5 });
+        var monitorWidth = Width;
+        foreach (var width in new[] { 800.0, 1280, 1920, 2560 })
+        {
+            Width = width;
+            UpdateLayout();
+            ArrangeCards();
+            var previous = -1.0;
+            foreach (NoteCard card in NotesPanel.Children)
+            {
+                var x = Canvas.GetLeft(card);
+                SmokeChecks.Assert(x >= previous && x + card.Width <= width - ClotheslineLayout.RightInset + 0.1, "Overlapping card left monitor bounds");
+                previous = x;
+            }
+            SmokeChecks.Snapshot(this, Path.Combine(output, $"02-overlap-{width}.png"));
+        }
+        Width = monitorWidth;
+        ApplyScreen();
+        await Task.Delay(650);
+        SmokeChecks.Snapshot(this, Path.Combine(output, "03-edge-clothesline.png"));
         var detail = new NoteWindow(notebook.Notes[0], store) { Owner = this };
         detail.Show();
         await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
-        SmokeChecks.Snapshot(detail, Path.Combine(output, "03-detail.png"));
+        SmokeChecks.Snapshot(detail, Path.Combine(output, "04-detail.png"));
         detail.Close();
     }
 
-    internal void CloseForSmoke()
-    {
-        exiting = true;
-        toastTimer.Stop(); undoTimer.Stop();
-        NativeMethods.UnregisterHotKey(handle, 1);
-        NativeMethods.UnregisterHotKey(handle, 2);
-        tray?.Dispose();
-        Close();
-    }
+    internal void CloseForSmoke() { exiting = true; Close(); }
 }
