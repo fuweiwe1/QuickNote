@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
 using QuickNote.Core;
@@ -11,6 +12,7 @@ internal static class UpdateSmokeChecks
 {
     internal static async Task RunParent(string workspace)
     {
+        File.AppendAllText(Path.Combine(workspace, "trace.txt"), "parent entered\n");
         if (!UpdateCoordinator.IsWorkspaceFile(Path.Combine(workspace, "package.exe"), "package.exe"))
             throw new InvalidDataException("Invalid test workspace");
         var staged = Path.Combine(workspace, "package.exe");
@@ -24,6 +26,7 @@ internal static class UpdateSmokeChecks
     internal static async Task Run(string output)
     {
         Directory.CreateDirectory(output);
+        SmokeChecks.Assert(UpdateCoordinator.Flavor is not null, "Published package flavor metadata is missing");
         foreach (var broken in new[] { false, true })
         {
             var workspace = UpdateCoordinator.CreateWorkspace();
@@ -38,9 +41,12 @@ internal static class UpdateSmokeChecks
                 else File.Copy(Environment.ProcessPath!, staged);
                 var notebook = Path.Combine(workspace, "notebook.json");
                 File.WriteAllText(notebook, "便签和图片不参与程序更新");
-                var start = new ProcessStartInfo(target) { UseShellExecute = false, WorkingDirectory = program };
+                var start = new ProcessStartInfo(target) { UseShellExecute = false, WorkingDirectory = program,
+                    RedirectStandardError = true, RedirectStandardOutput = true };
                 start.ArgumentList.Add("--update-parent-smoke"); start.ArgumentList.Add(workspace);
                 using var parent = Process.Start(start) ?? throw new Exception("Cannot launch parent fixture");
+                var errors = parent.StandardError.ReadToEndAsync();
+                var messages = parent.StandardOutput.ReadToEndAsync();
                 var finished = false;
                 for (var attempt = 0; attempt < 400; attempt++)
                 {
@@ -49,9 +55,17 @@ internal static class UpdateSmokeChecks
                     if (File.Exists(Path.Combine(workspace, broken ? "error.txt" : "complete"))) { finished = true; break; }
                     if (!broken && File.Exists(Path.Combine(workspace, "error.txt")))
                         throw new Exception(File.ReadAllText(Path.Combine(workspace, "error.txt")));
+                    if (parent.HasExited && !File.Exists(Path.Combine(workspace, "ready")))
+                        throw new Exception($"Parent fixture exited before helper readiness ({parent.ExitCode}).\n" + await errors + await messages);
                     await Task.Delay(100);
                 }
-                SmokeChecks.Assert(finished, "Update handoff timed out");
+                if (!finished)
+                {
+                    var trace = Path.Combine(workspace, "trace.txt");
+                    throw new Exception("Update handoff timed out. Parent exited: " + parent.HasExited + "; files: " +
+                        string.Join(",", Directory.GetFiles(workspace).Select(Path.GetFileName)) + "\n" +
+                        (File.Exists(trace) ? File.ReadAllText(trace) : "no child trace"));
+                }
                 await parent.WaitForExitAsync();
                 SmokeChecks.Assert(parent.ExitCode == 0, "Parent did not exit cleanly");
                 using var original = File.OpenRead(Environment.ProcessPath!);

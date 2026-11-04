@@ -19,6 +19,7 @@ internal static class UpdateHelper
         var staged = Path.Combine(workspace, "package.exe");
         var health = Path.Combine(workspace, "started.ok");
         var plan = JsonSerializer.Deserialize<UpdatePlan>(File.ReadAllText(planFile)) ?? throw new InvalidDataException("更新计划为空。");
+        if (plan.SmokeMode) File.AppendAllText(Path.Combine(workspace, "trace.txt"), "helper entered\n");
         var applied = false;
         var released = false;
         Process? restarted = null;
@@ -44,8 +45,10 @@ internal static class UpdateHelper
                 progress.Show();
             }
             File.WriteAllText(Path.Combine(workspace, "ready"), "ready");
+            if (plan.SmokeMode) File.AppendAllText(Path.Combine(workspace, "trace.txt"), "helper ready\n");
             using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90))) await parent.WaitForExitAsync(timeout.Token);
             released = true;
+            if (plan.SmokeMode) File.AppendAllText(Path.Combine(workspace, "trace.txt"), "parent exited\n");
             for (var attempt = 0; ; attempt++)
             {
                 try { ExecutableUpdate.Apply(staged, plan.Target, plan.Size, plan.Sha256); break; }

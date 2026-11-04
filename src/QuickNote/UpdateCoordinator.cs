@@ -65,6 +65,7 @@ internal static class UpdateCoordinator
         var start = new ProcessStartInfo(helperFile) { UseShellExecute = false, WorkingDirectory = workspace };
         start.ArgumentList.Add("--apply-update"); start.ArgumentList.Add(planFile);
         using var helper = Process.Start(start) ?? throw new Win32Exception("无法启动更新程序。");
+        if (smokeMode) File.AppendAllText(Path.Combine(workspace, "trace.txt"), "helper launched: " + helper.Id + "\n");
         for (var i = 0; i < 200; i++)
         {
             if (File.Exists(Path.Combine(workspace, "error.txt")))
