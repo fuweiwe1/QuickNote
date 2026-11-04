@@ -311,6 +311,13 @@ Check("A corrupted staged executable leaves the installed version untouched", pa
     Throws<InvalidDataException>(() => ExecutableUpdate.Apply(staged, target, payload.Length, digest));
     Assert(File.ReadAllText(target) == "old version" && !File.Exists(target + ".previous"));
 });
+Check("A valid digest does not make an invalid Windows image installable", path =>
+{
+    var staged = Path.Combine(path, "package.exe");
+    File.WriteAllBytes(staged, payload);
+    ExecutableUpdate.Verify(staged, payload.Length, digest);
+    Throws<InvalidDataException>(() => ExecutableUpdate.VerifyWindowsImage(staged));
+});
 Check("Free card positions survive restart and resize without moving other cards", path =>
 {
     var store = new NotebookStore(path);

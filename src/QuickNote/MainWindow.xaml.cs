@@ -270,7 +270,7 @@ public partial class MainWindow : Window
         try
         {
             await ClipboardService.WithRetry(() => { ClipboardService.Copy(note, store); return true; });
-            if (card is not null) await card.ShowCopied();
+            if (card is not null) _ = card.ShowCopied();
         }
         catch (Exception ex) when (IsContentError(ex)) { NotifyError("复制失败：" + FriendlyError(ex)); }
         finally { dock.Release(Environment.TickCount64); }
